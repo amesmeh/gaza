@@ -1,0 +1,34 @@
+{
+  "name": "gaza-aid-system-backend",
+  "version": "1.0.0",
+  "description": "Backend for Gaza Aid Management System",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "gaza",
+    "aid",
+    "management",
+    "mongodb",
+    "express"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "mongoose": "^8.16.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  }
+} 

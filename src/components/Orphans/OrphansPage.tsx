@@ -7,13 +7,12 @@ import { OrphanTable } from './OrphanTable';
 import { OrphanAdvancedFilter } from './OrphanAdvancedFilter';
 import { SimpleSearch } from '../Guardians/SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockOrphans, mockMartyrs } from '../../data/mockData';
 import { exportOrphansToExcel, createOrphansTemplate, importOrphansFromExcel, exportOrphansErrorsToExcel, downloadExcelFile } from '../../utils/orphansExcelUtils';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { orphansAPI, martyrsAPI } from '../../services/api';
 
 export const OrphansPage: React.FC = () => {
-  const [orphans, setOrphans] = useLocalStorage<Orphan[]>('orphans', mockOrphans);
-  const [martyrs, setMartyrs] = useLocalStorage<Martyr[]>('martyrs', mockMartyrs);
+  const [orphans, setOrphans] = useState<Orphan[]>([]);
+  const [martyrs, setMartyrs] = useState<Martyr[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -34,14 +33,17 @@ export const OrphansPage: React.FC = () => {
     searchTerm: ''
   });
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من الخادم
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        setIsLoading(true);
+        const [orphansData, martyrsData] = await Promise.all([
+          orphansAPI.getAll(),
+          martyrsAPI.getAll()
+        ]);
+        setOrphans(orphansData);
+        setMartyrs(martyrsData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -68,10 +70,9 @@ export const OrphansPage: React.FC = () => {
         return (
           orphan.name.toLowerCase().includes(term) ||
           orphan.nationalId.includes(term) ||
-          orphan.martyrName.toLowerCase().includes(term) ||
-          orphan.martyrNationalId.includes(term) ||
-          orphan.guardianName.toLowerCase().includes(term) ||
-          orphan.phone.includes(term)
+          (orphan.guardianName && orphan.guardianName.toLowerCase().includes(term)) ||
+          (orphan.guardianNationalId && orphan.guardianNationalId.includes(term)) ||
+          (orphan.areaName && orphan.areaName.toLowerCase().includes(term))
         );
       });
       
@@ -97,21 +98,6 @@ export const OrphansPage: React.FC = () => {
     const timer = setTimeout(() => {
       let filtered = [...orphans];
       
-      // فلترة حسب الجنس
-      if (filters.selectedGender) {
-        filtered = filtered.filter(orphan => orphan.gender === filters.selectedGender);
-      }
-      
-      // فلترة حسب الحالة الصحية
-      if (filters.selectedHealthStatus) {
-        filtered = filtered.filter(orphan => orphan.healthStatus === filters.selectedHealthStatus);
-      }
-      
-      // فلترة حسب المرحلة الدراسية
-      if (filters.selectedEducationalStage) {
-        filtered = filtered.filter(orphan => orphan.educationalStage === filters.selectedEducationalStage);
-      }
-      
       // فلترة حسب نطاق العمر
       if (filters.ageRange.min) {
         filtered = filtered.filter(orphan => orphan.age >= parseInt(filters.ageRange.min));
@@ -128,26 +114,14 @@ export const OrphansPage: React.FC = () => {
         filtered = filtered.filter(orphan => new Date(orphan.birthDate) <= new Date(filters.birthDateRange.to));
       }
       
-      // فلترة حسب عدد الأخوة
-      if (filters.siblingsRange.min) {
-        const minSiblings = parseInt(filters.siblingsRange.min);
-        filtered = filtered.filter(orphan => (orphan.maleSiblingsCount + orphan.femaleSiblingsCount) >= minSiblings);
-      }
-      if (filters.siblingsRange.max) {
-        const maxSiblings = parseInt(filters.siblingsRange.max);
-        filtered = filtered.filter(orphan => (orphan.maleSiblingsCount + orphan.femaleSiblingsCount) <= maxSiblings);
-      }
-      
       // فلترة حسب البحث العام
       if (filters.searchTerm) {
         const term = filters.searchTerm.toLowerCase();
         filtered = filtered.filter(orphan => 
           orphan.name.toLowerCase().includes(term) ||
           orphan.nationalId.includes(term) ||
-          orphan.martyrName.toLowerCase().includes(term) ||
-          orphan.guardianName.toLowerCase().includes(term) ||
-          orphan.address.toLowerCase().includes(term) ||
-          orphan.phone.includes(term)
+          (orphan.guardianName && orphan.guardianName.toLowerCase().includes(term)) ||
+          (orphan.areaName && orphan.areaName.toLowerCase().includes(term))
         );
       }
       
@@ -171,35 +145,51 @@ export const OrphansPage: React.FC = () => {
            filters.searchTerm;
   };
 
-  const handleAddOrphan = (data: Omit<Orphan, 'id' | 'createdAt' | 'updatedAt' | 'age'>) => {
-    const newOrphan: Orphan = {
-      ...data,
-      id: Math.max(0, ...orphans.map(o => o.id)) + 1,
-      age: calculateAge(data.birthDate),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    setOrphans([newOrphan, ...orphans]);
-    setIsAddModalOpen(false);
+  const handleAddOrphan = async (data: Omit<Orphan, '_id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = martyrs.find(m => m._id === data.guardianId);
+      
+      const orphanData = {
+        ...data,
+        guardianName: guardian?.guardianName || '',
+        guardianNationalId: guardian?.guardianNationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const newOrphan = await orphansAPI.create(orphanData);
+      setOrphans(prev => [...prev, newOrphan]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding orphan:', error);
+      alert('حدث خطأ أثناء إضافة اليتيم');
+    }
   };
 
-  const handleEditOrphan = (data: Omit<Orphan, 'id' | 'createdAt' | 'updatedAt' | 'age'>) => {
-    if (!selectedOrphan) return;
+  const handleEditOrphan = async (data: Omit<Orphan, '_id' | 'createdAt' | 'updatedAt'>) => {
+    if (!selectedOrphan?._id) return;
     
-    const updatedOrphan: Orphan = {
-      ...data,
-      id: selectedOrphan.id,
-      age: calculateAge(data.birthDate),
-      createdAt: selectedOrphan.createdAt,
-      updatedAt: new Date().toISOString()
-    };
-    
-    setOrphans(orphans.map(orphan => 
-      orphan.id === selectedOrphan.id ? updatedOrphan : orphan
-    ));
-    
-    setIsEditModalOpen(false);
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = martyrs.find(m => m._id === data.guardianId);
+      
+      const orphanData = {
+        ...data,
+        guardianName: guardian?.guardianName || '',
+        guardianNationalId: guardian?.guardianNationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const updatedOrphan = await orphansAPI.update(selectedOrphan._id, orphanData);
+      setOrphans(prev => prev.map(orphan => orphan._id === selectedOrphan._id ? updatedOrphan : orphan));
+      setIsEditModalOpen(false);
+      setSelectedOrphan(null);
+    } catch (error) {
+      console.error('Error updating orphan:', error);
+      alert('حدث خطأ أثناء تحديث اليتيم');
+    }
   };
 
   const handleViewOrphan = (orphan: Orphan) => {
@@ -212,25 +202,45 @@ export const OrphansPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteOrphan = (orphan: Orphan) => {
+  const handleDeleteOrphan = async (orphan: Orphan) => {
+    if (!orphan._id) return;
+    
     if (window.confirm(`هل أنت متأكد من حذف اليتيم ${orphan.name}؟`)) {
-      setOrphans(orphans.filter(o => o.id !== orphan.id));
+      try {
+        await orphansAPI.delete(orphan._id);
+        setOrphans(prev => prev.filter(o => o._id !== orphan._id));
+      } catch (error) {
+        console.error('Error deleting orphan:', error);
+        alert('حدث خطأ أثناء حذف اليتيم');
+      }
     }
   };
 
-  const handleBulkDelete = (orphanIds: number[]) => {
-    setOrphans(orphans.filter(orphan => !orphanIds.includes(orphan.id)));
+  const handleBulkDelete = async (orphanIds: string[]) => {
+    if (window.confirm(`هل أنت متأكد من حذف ${orphanIds.length} يتيم؟`)) {
+      try {
+        // حذف واحد تلو الآخر لأن API لا يدعم حذف متعدد
+        for (const id of orphanIds) {
+          await orphansAPI.delete(id);
+        }
+        setOrphans(prev => prev.filter(orphan => !orphanIds.includes(orphan._id || '')));
+      } catch (error) {
+        console.error('Error bulk deleting orphans:', error);
+        alert('حدث خطأ أثناء حذف الأيتام');
+      }
+    }
   };
 
-  const handleInlineEdit = (orphan: Orphan, field: string, value: any) => {
-    const updatedOrphans = orphans.map(o => {
-      if (o.id === orphan.id) {
-        return { ...o, [field]: value, updatedAt: new Date().toISOString() };
-      }
-      return o;
-    });
+  const handleInlineEdit = async (orphan: Orphan, field: string, value: any) => {
+    if (!orphan._id) return;
     
-    setOrphans(updatedOrphans);
+    try {
+      const updatedOrphan = await orphansAPI.update(orphan._id, { [field]: value });
+      setOrphans(prev => prev.map(o => o._id === orphan._id ? updatedOrphan : o));
+    } catch (error) {
+      console.error('Error updating orphan:', error);
+      alert('حدث خطأ أثناء تحديث اليتيم');
+    }
   };
 
   const handleFiltersChange = (newFilters: typeof filters) => {
@@ -277,15 +287,21 @@ export const OrphansPage: React.FC = () => {
       }
       
       if (validOrphans.length > 0) {
-        const newOrphans = validOrphans.map((orphanData, index) => ({
-          ...orphanData,
-          id: Math.max(0, ...orphans.map(o => o.id)) + index + 1,
-          age: calculateAge(orphanData.birthDate as string),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })) as Orphan[];
+        const newOrphans = await Promise.all(
+          validOrphans.map(async (orphanData) => {
+            const guardian = martyrs.find(m => m._id === orphanData.guardianId);
+            const orphanToCreate = {
+              ...orphanData,
+              guardianName: guardian?.guardianName || '',
+              guardianNationalId: guardian?.guardianNationalId || '',
+              areaId: guardian?.areaId || '',
+              areaName: guardian?.areaName || ''
+            };
+            return await orphansAPI.create(orphanToCreate);
+          })
+        );
         
-        setOrphans([...newOrphans, ...orphans]);
+        setOrphans(prev => [...newOrphans, ...prev]);
         alert(`تم استيراد ${newOrphans.length} يتيم بنجاح.`);
       } else {
         alert('لم يتم استيراد أي بيانات. يرجى التحقق من الملف والأخطاء.');

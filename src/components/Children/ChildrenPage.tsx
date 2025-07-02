@@ -7,14 +7,13 @@ import { ChildrenTable } from './ChildrenTable';
 import { ChildrenAdvancedFilter } from './ChildrenAdvancedFilter';
 import { SimpleSearch } from '../Guardians/SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockChildren, mockGuardians, mockAreas } from '../../data/mockData';
 import { exportChildrenToExcel, createChildrenTemplate, importChildrenFromExcel, exportChildrenErrorsToExcel, downloadExcelFile } from '../../utils/childrenExcelUtils';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { smartSearch } from '../../utils/smartSearch';
+import { childrenAPI, guardiansAPI } from '../../services/api';
 
 export const ChildrenPage: React.FC = () => {
-  const [children, setChildren] = useLocalStorage<Child[]>('children', mockChildren);
-  const [guardians, setGuardians] = useLocalStorage<Guardian[]>('guardians', mockGuardians);
+  const [children, setChildren] = useState<Child[]>([]);
+  const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -36,18 +35,23 @@ export const ChildrenPage: React.FC = () => {
     ageRange: { min: '', max: '' }
   });
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من الخادم
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        setIsLoading(true);
+        const [childrenData, guardiansData] = await Promise.all([
+          childrenAPI.getAll(),
+          guardiansAPI.getAll()
+        ]);
+        setChildren(childrenData);
+        setGuardians(guardiansData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
         setIsLoading(false);
+        // إظهار رسالة خطأ للمستخدم
+        alert('حدث خطأ في تحميل البيانات. يرجى إعادة تحميل الصفحة.');
       }
     };
 
@@ -80,54 +84,6 @@ export const ChildrenPage: React.FC = () => {
     
     return () => clearTimeout(timer);
   }, [searchTerm, children]);
-
-  // عند تحميل البيانات أو تحديثها، اربط المنطقة من ولي الأمر إذا لم تكن موجودة
-  useEffect(() => {
-    setChildren(prevChildren => prevChildren.map(child => {
-      if (!child.areaId || !child.areaName) {
-        const guardian = guardians.find(g => g.id === child.guardianId);
-        if (guardian) {
-          return {
-            ...child,
-            areaId: guardian.areaId,
-            areaName: guardian.area?.name || guardian.areaName || ''
-          };
-        }
-      }
-      return child;
-    }));
-  }, [guardians]);
-
-  // تحميل بيانات أولياء الأمور مع areaName
-  useEffect(() => {
-    setGuardians(prevGuardians => prevGuardians.map(g => ({
-      ...g,
-      areaName: g.areaName || g.area?.name || ''
-    })));
-  }, []);
-
-  // دالة لإعادة تعيين البيانات الوهمية مع معلومات المنطقة
-  const resetChildrenData = () => {
-    const updatedChildren = mockChildren.map(child => {
-      const guardian = guardians.find(g => g.id === child.guardianId);
-      if (guardian) {
-        return {
-          ...child,
-          areaId: guardian.areaId,
-          areaName: guardian.areaName || ''
-        };
-      }
-      return child;
-    });
-    setChildren(updatedChildren);
-  };
-
-  // إعادة تعيين البيانات عند التحميل الأول
-  useEffect(() => {
-    if (children.length === 0) {
-      resetChildrenData();
-    }
-  }, [guardians]);
 
   // تطبيق الفلاتر المتقدمة
   useEffect(() => {
@@ -192,93 +148,73 @@ export const ChildrenPage: React.FC = () => {
            filters.ageRange.max;
   };
 
-  const handleAddChild = (data: Omit<Child, 'id' | 'createdAt' | 'updatedAt' | 'age'>) => {
-    // الحصول على بيانات ولي الأمر لتحديث المنطقة
-    const guardian = guardians.find(g => g.id === data.guardianId);
-    
-    // حساب العمر
-    const birthDate = new Date(data.birthDate);
-    const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const monthDiff = today.getMonth() - birthDate.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-      age--;
-    }
-    
-    const newChild: Child = {
-      ...data,
-      id: Math.max(0, ...children.map(c => c.id)) + 1,
-      age,
-      areaId: guardian?.areaId || 0,
-      areaName: guardian?.area?.name || '',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    // تحديث عدد الأبناء لولي الأمر
-    const updatedGuardians = guardians.map(g => {
-      if (g.id === data.guardianId) {
-        return {
-          ...g,
-          childrenCount: g.childrenCount + 1,
-          familyMembersCount: g.familyMembersCount + 1,
-          updatedAt: new Date().toISOString()
-        };
+  const handleAddChild = async (data: Omit<Child, '_id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = guardians.find(g => g._id === data.guardianId);
+      
+      // حساب العمر
+      const birthDate = new Date(data.birthDate);
+      const today = new Date();
+      let age = today.getFullYear() - birthDate.getFullYear();
+      const monthDiff = today.getMonth() - birthDate.getMonth();
+      
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+        age--;
       }
-      return g;
-    });
-    
-    setChildren([newChild, ...children]);
-    setGuardians(updatedGuardians);
-    setIsAddModalOpen(false);
+
+      const childData = {
+        ...data,
+        age,
+        guardianName: guardian?.name || '',
+        guardianNationalId: guardian?.nationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const newChild = await childrenAPI.create(childData);
+      setChildren(prev => [...prev, newChild]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding child:', error);
+      alert('حدث خطأ أثناء إضافة الابن');
+    }
   };
 
-  const handleEditChild = (data: Omit<Child, 'id' | 'createdAt' | 'updatedAt' | 'age'>) => {
-    if (!selectedChild) return;
+  const handleEditChild = async (data: Omit<Child, '_id' | 'createdAt' | 'updatedAt'>) => {
+    if (!selectedChild?._id) return;
     
-    // الحصول على بيانات ولي الأمر لتحديث المنطقة
-    const guardian = guardians.find(g => g.id === data.guardianId);
-    
-    const updatedChild: Child = {
-      ...data,
-      id: selectedChild.id,
-      age: calculateAge(data.birthDate),
-      areaId: guardian?.areaId || 0,
-      areaName: guardian?.area?.name || '',
-      createdAt: selectedChild.createdAt,
-      updatedAt: new Date().toISOString()
-    };
-    
-    // إذا تغير ولي الأمر، نحدث عدد الأبناء للوليين القديم والجديد
-    if (selectedChild.guardianId !== data.guardianId) {
-      const updatedGuardians = guardians.map(guardian => {
-        if (guardian.id === selectedChild.guardianId) {
-          return {
-            ...guardian,
-            childrenCount: Math.max(0, guardian.childrenCount - 1),
-            familyMembersCount: Math.max(1, guardian.familyMembersCount - 1),
-            updatedAt: new Date().toISOString()
-          };
-        }
-        if (guardian.id === data.guardianId) {
-          return {
-            ...guardian,
-            childrenCount: guardian.childrenCount + 1,
-            familyMembersCount: guardian.familyMembersCount + 1,
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return guardian;
-      });
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = guardians.find(g => g._id === data.guardianId);
       
-      setGuardians(updatedGuardians);
+      // حساب العمر
+      const birthDate = new Date(data.birthDate);
+      const today = new Date();
+      let age = today.getFullYear() - birthDate.getFullYear();
+      const monthDiff = today.getMonth() - birthDate.getMonth();
+      
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+        age--;
+      }
+
+      const childData = {
+        ...data,
+        age,
+        guardianName: guardian?.name || '',
+        guardianNationalId: guardian?.nationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const updatedChild = await childrenAPI.update(selectedChild._id, childData);
+      setChildren(prev => prev.map(child => child._id === selectedChild._id ? updatedChild : child));
+      setIsEditModalOpen(false);
+      setSelectedChild(null);
+    } catch (error) {
+      console.error('Error updating child:', error);
+      alert('حدث خطأ أثناء تحديث الابن');
     }
-    
-    setChildren(children.map(child => 
-      child.id === selectedChild.id ? updatedChild : child
-    ));
-    
-    setIsEditModalOpen(false);
   };
 
   const handleViewChild = (child: Child) => {
@@ -291,57 +227,42 @@ export const ChildrenPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteChild = (child: Child) => {
+  const handleDeleteChild = async (child: Child) => {
+    if (!child._id) return;
+    
     if (window.confirm(`هل أنت متأكد من حذف الابن ${child.name}؟`)) {
-      // تحديث عدد الأبناء لولي الأمر
-      const updatedGuardians = guardians.map(guardian => {
-        if (guardian.id === child.guardianId) {
-          return {
-            ...guardian,
-            childrenCount: Math.max(0, guardian.childrenCount - 1),
-            familyMembersCount: Math.max(1, guardian.familyMembersCount - 1),
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return guardian;
-      });
-      
-      setChildren(children.filter(c => c.id !== child.id));
-      setGuardians(updatedGuardians);
+      try {
+        await childrenAPI.delete(child._id);
+        setChildren(prev => prev.filter(c => c._id !== child._id));
+      } catch (error) {
+        console.error('Error deleting child:', error);
+        alert('حدث خطأ أثناء حذف الابن');
+      }
     }
   };
 
-  const handleBulkDelete = (childIds: number[]) => {
-    // تحديث عدد الأبناء لأولياء الأمور
-    const childrenToDelete = children.filter(child => childIds.includes(child.id));
-    const guardianIds = new Set(childrenToDelete.map(child => child.guardianId));
-    
-    const updatedGuardians = guardians.map(guardian => {
-      if (guardianIds.has(guardian.id)) {
-        const deletedChildrenCount = childrenToDelete.filter(child => child.guardianId === guardian.id).length;
-        return {
-          ...guardian,
-          childrenCount: Math.max(0, guardian.childrenCount - deletedChildrenCount),
-          familyMembersCount: Math.max(1, guardian.familyMembersCount - deletedChildrenCount),
-          updatedAt: new Date().toISOString()
-        };
+  const handleBulkDelete = async (childIds: string[]) => {
+    if (window.confirm(`هل أنت متأكد من حذف ${childIds.length} ابن؟`)) {
+      try {
+        await childrenAPI.deleteMany(childIds);
+        setChildren(prev => prev.filter(child => !childIds.includes(child._id || '')));
+      } catch (error) {
+        console.error('Error bulk deleting children:', error);
+        alert('حدث خطأ أثناء حذف الأبناء');
       }
-      return guardian;
-    });
-    
-    setChildren(children.filter(child => !childIds.includes(child.id)));
-    setGuardians(updatedGuardians);
+    }
   };
 
-  const handleInlineEdit = (child: Child, field: string, value: any) => {
-    const updatedChildren = children.map(c => {
-      if (c.id === child.id) {
-        return { ...c, [field]: value, updatedAt: new Date().toISOString() };
-      }
-      return c;
-    });
+  const handleInlineEdit = async (child: Child, field: string, value: any) => {
+    if (!child._id) return;
     
-    setChildren(updatedChildren);
+    try {
+      const updatedChild = await childrenAPI.update(child._id, { [field]: value });
+      setChildren(prev => prev.map(c => c._id === child._id ? updatedChild : c));
+    } catch (error) {
+      console.error('Error updating child:', error);
+      alert('حدث خطأ أثناء تحديث الابن');
+    }
   };
 
   const handleFiltersChange = (newFilters: typeof filters) => {
@@ -389,31 +310,22 @@ export const ChildrenPage: React.FC = () => {
       }
       
       if (validChildren.length > 0) {
-        const newChildren = validChildren.map((childData, index) => ({
-          ...childData,
-          id: Math.max(0, ...children.map(c => c.id)) + index + 1,
-          age: calculateAge(childData.birthDate as string),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })) as Child[];
-        
-        // تحديث عدد الأبناء لأولياء الأمور
-        const guardianIds = new Set(newChildren.map(child => child.guardianId));
-        const updatedGuardians = guardians.map(guardian => {
-          if (guardianIds.has(guardian.id)) {
-            const newChildrenCount = newChildren.filter(child => child.guardianId === guardian.id).length;
-            return {
-              ...guardian,
-              childrenCount: guardian.childrenCount + newChildrenCount,
-              familyMembersCount: guardian.familyMembersCount + newChildrenCount,
-              updatedAt: new Date().toISOString()
+        const newChildren = await Promise.all(
+          validChildren.map(async (childData) => {
+            const guardian = guardians.find(g => g._id === childData.guardianId);
+            const childToCreate = {
+              ...childData,
+              age: calculateAge(childData.birthDate as string),
+              guardianName: guardian?.name || '',
+              guardianNationalId: guardian?.nationalId || '',
+              areaId: guardian?.areaId || '',
+              areaName: guardian?.areaName || ''
             };
-          }
-          return guardian;
-        });
+            return await childrenAPI.create(childToCreate);
+          })
+        );
         
-        setChildren([...newChildren, ...children]);
-        setGuardians(updatedGuardians);
+        setChildren(prev => [...newChildren, ...prev]);
         alert(`تم استيراد ${newChildren.length} ابن بنجاح.`);
       } else {
         alert('لم يتم استيراد أي بيانات. يرجى التحقق من الملف والأخطاء.');
@@ -516,9 +428,19 @@ export const ChildrenPage: React.FC = () => {
 
             {/* زر حذف الكل */}
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (window.confirm('هل أنت متأكد أنك تريد حذف جميع الأبناء؟ لا يمكن التراجع عن هذه العملية.')) {
-                  setChildren([]);
+                  try {
+                    const allChildIds = children.map(child => child._id || '').filter(id => id);
+                    if (allChildIds.length > 0) {
+                      await childrenAPI.deleteMany(allChildIds);
+                      setChildren([]);
+                      alert('تم حذف جميع الأبناء بنجاح');
+                    }
+                  } catch (error) {
+                    console.error('Error deleting all children:', error);
+                    alert('حدث خطأ أثناء حذف جميع الأبناء');
+                  }
                 }
               }}
               className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg hover:from-red-700 hover:to-red-800 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm"
@@ -530,42 +452,14 @@ export const ChildrenPage: React.FC = () => {
             {/* زر إعادة تعيين البيانات */}
             <button
               onClick={() => {
-                if (window.confirm('هل تريد إعادة تعيين بيانات الأبناء بالبيانات الوهمية مع معلومات المنطقة؟')) {
-                  const updatedChildren = mockChildren.map(child => {
-                    const guardian = guardians.find(g => g.id === child.guardianId);
-                    if (guardian) {
-                      return {
-                        ...child,
-                        areaId: guardian.areaId,
-                        areaName: guardian.areaName || ''
-                      };
-                    }
-                    return child;
-                  });
-                  setChildren(updatedChildren);
+                if (window.confirm('هل تريد إعادة تعيين بيانات الأبناء؟')) {
+                  fetchData();
                 }
               }}
               className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-yellow-600 to-yellow-700 text-white rounded-lg hover:from-yellow-700 hover:to-yellow-800 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm"
             >
               <span className="text-lg font-bold">↻</span>
-              <span>إعادة تعيين البيانات</span>
-            </button>
-
-            {/* زر إعادة تعيين أولياء الأمور */}
-            <button
-              onClick={() => {
-                if (window.confirm('هل تريد إعادة تعيين أولياء الأمور للبيانات الافتراضية؟')) {
-                  setGuardians(mockGuardians.map(g => ({
-                    ...g,
-                    areaName: g.areaName || g.area?.name || ''
-                  })));
-                  alert('تمت إعادة تعيين أولياء الأمور! سيتم إعادة تحميل الصفحة الآن.');
-                  window.location.reload();
-                }
-              }}
-              className="px-4 py-2 bg-orange-500 text-white rounded-lg shadow hover:bg-orange-600 font-semibold text-sm mb-4"
-            >
-              إعادة تعيين أولياء الأمور (مؤقت)
+              <span>إعادة تحميل البيانات</span>
             </button>
           </div>
         </div>
@@ -584,7 +478,7 @@ export const ChildrenPage: React.FC = () => {
       <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-4">
         <ChildrenAdvancedFilter
           filters={filters}
-          areas={mockAreas}
+          areas={[]}
           guardians={guardians}
           onFiltersChange={handleFiltersChange}
           onSearch={() => {}}

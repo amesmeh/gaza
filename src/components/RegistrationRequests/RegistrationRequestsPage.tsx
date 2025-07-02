@@ -6,13 +6,11 @@ import { RegistrationRequestDetails } from './RegistrationRequestDetails';
 import { RegistrationRequestTable } from './RegistrationRequestTable';
 import { RegistrationRequestFilter } from './RegistrationRequestFilter';
 import { Plus, Download, Upload, FileText, ExternalLink } from 'lucide-react';
-import { mockRegistrationRequests } from '../../data/mockData';
-import { mockAreas } from '../../data/mockData';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { registrationRequestsAPI, areasAPI, guardiansAPI, childrenAPI } from '../../services/api';
 
 export const RegistrationRequestsPage: React.FC = () => {
-  const [requests, setRequests] = useLocalStorage<RegistrationRequest[]>('registrationRequests', mockRegistrationRequests);
-  const [areas, setAreas] = useLocalStorage<Area[]>('areas', mockAreas);
+  const [requests, setRequests] = useState<RegistrationRequest[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
   const [filteredRequests, setFilteredRequests] = useState<RegistrationRequest[]>([]);
@@ -27,14 +25,17 @@ export const RegistrationRequestsPage: React.FC = () => {
     searchTerm: ''
   });
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من الخادم
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        setIsLoading(true);
+        const [requestsData, areasData] = await Promise.all([
+          registrationRequestsAPI.getAll(),
+          areasAPI.getAll()
+        ]);
+        setRequests(requestsData);
+        setAreas(areasData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -62,7 +63,7 @@ export const RegistrationRequestsPage: React.FC = () => {
       
       // فلترة حسب المنطقة
       if (filters.selectedArea) {
-        filtered = filtered.filter(request => request.areaId.toString() === filters.selectedArea);
+        filtered = filtered.filter(request => request.areaId?.toString() === filters.selectedArea);
       }
       
       // فلترة حسب البحث العام
@@ -82,17 +83,51 @@ export const RegistrationRequestsPage: React.FC = () => {
     applyFilters();
   }, [requests, filters]);
 
-  const handleAddRequest = (data: Omit<RegistrationRequest, 'id' | 'createdAt' | 'updatedAt' | 'status'>) => {
-    const newRequest: RegistrationRequest = {
-      ...data,
-      id: Math.max(0, ...requests.map(r => r.id)) + 1,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    setRequests([newRequest, ...requests]);
-    setIsAddModalOpen(false);
+  const handleAddRequest = async (data: Omit<RegistrationRequest, '_id' | 'createdAt' | 'updatedAt' | 'status'>) => {
+    try {
+      // تحضير البيانات التفصيلية
+      const requestDetails = {
+        gender: data.gender,
+        maritalStatus: data.maritalStatus,
+        currentJob: data.currentJob,
+        residenceStatus: data.residenceStatus,
+        originalGovernorate: data.originalGovernorate,
+        originalCity: data.originalCity,
+        displacementAddress: data.displacementAddress,
+        wives: data.wives || [],
+        children: data.children || [],
+        notes: data.notes
+      };
+
+      const requestData = {
+        name: data.name,
+        nationalId: data.nationalId,
+        phone: data.phone,
+        email: data.email,
+        gender: data.gender,
+        maritalStatus: data.maritalStatus,
+        currentJob: data.currentJob,
+        residenceStatus: data.residenceStatus,
+        originalGovernorate: data.originalGovernorate,
+        originalCity: data.originalCity,
+        displacementAddress: data.displacementAddress,
+        areaId: data.areaId,
+        areaName: data.areaName,
+        wives: data.wives || [],
+        children: data.children || [],
+        notes: data.notes,
+        requestType: 'تسجيل عائلة جديدة',
+        requestDetails: JSON.stringify(requestDetails),
+        status: 'pending'
+      };
+
+      const newRequest = await registrationRequestsAPI.create(requestData);
+      setRequests(prev => [...prev, newRequest]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding request:', error);
+      alert('حدث خطأ أثناء إضافة الطلب');
+    }
   };
 
   const handleViewRequest = (request: RegistrationRequest) => {
@@ -100,76 +135,140 @@ export const RegistrationRequestsPage: React.FC = () => {
     setIsViewModalOpen(true);
   };
 
-  const handleDeleteRequest = (request: RegistrationRequest) => {
+  const handleDeleteRequest = async (request: RegistrationRequest) => {
+    if (!request._id) return;
+    
     if (window.confirm(`هل أنت متأكد من حذف طلب ${request.name}؟`)) {
-      setRequests(requests.filter(r => r.id !== request.id));
+      try {
+        await registrationRequestsAPI.delete(request._id);
+        setRequests(prev => prev.filter(r => r._id !== request._id));
+      } catch (error) {
+        console.error('Error deleting request:', error);
+        alert('حدث خطأ أثناء حذف الطلب');
+      }
     }
   };
 
-  const handleBulkDelete = (requestIds: number[]) => {
-    setRequests(requests.filter(request => !requestIds.includes(request.id)));
+  const handleBulkDelete = async (requestIds: string[]) => {
+    if (window.confirm(`هل أنت متأكد من حذف ${requestIds.length} طلب؟`)) {
+      try {
+        // حذف واحد تلو الآخر لأن API لا يدعم حذف متعدد
+        for (const id of requestIds) {
+          await registrationRequestsAPI.delete(id);
+        }
+        setRequests(prev => prev.filter(request => !requestIds.includes(request._id || '')));
+      } catch (error) {
+        console.error('Error bulk deleting requests:', error);
+        alert('حدث خطأ أثناء حذف الطلبات');
+      }
+    }
   };
 
-  const handleApproveRequest = (request: RegistrationRequest) => {
+  const handleApproveRequest = async (request: RegistrationRequest) => {
+    if (!request._id) return;
+    
     if (window.confirm(`هل أنت متأكد من الموافقة على طلب ${request.name}؟`)) {
-      const updatedRequests = requests.map(r => {
-        if (r.id === request.id) {
-          return {
-            ...r,
-            status: 'approved',
-            updatedAt: new Date().toISOString(),
-            reviewedAt: new Date().toISOString(),
-            reviewedBy: 'المدير'
-          };
-        }
-        return r;
-      });
-      
-      setRequests(updatedRequests);
-      
-      // إذا كان الطلب مفتوح في نافذة التفاصيل، قم بتحديثه
-      if (selectedRequest && selectedRequest.id === request.id) {
-        setSelectedRequest({
-          ...selectedRequest,
+      try {
+        // تحديث حالة الطلب إلى موافق عليه
+        const updatedRequest = await registrationRequestsAPI.update(request._id, {
           status: 'approved',
-          updatedAt: new Date().toISOString(),
           reviewedAt: new Date().toISOString(),
           reviewedBy: 'المدير'
         });
+        
+        setRequests(prev => prev.map(r => r._id === request._id ? updatedRequest : r));
+        
+        // إذا كان الطلب مفتوح في نافذة التفاصيل، قم بتحديثه
+        if (selectedRequest && selectedRequest._id === request._id) {
+          setSelectedRequest(updatedRequest);
+        }
+        
+        // ترحيل البيانات إلى جدول أولياء الأمور
+        try {
+          const guardianData = {
+            name: request.name,
+            nationalId: request.nationalId,
+            phone: request.phone,
+            gender: request.gender || 'male',
+            maritalStatus: request.maritalStatus || 'متزوج',
+            childrenCount: request.children?.length || 0,
+            wivesCount: request.wives?.length || 1,
+            familyMembersCount: (request.children?.length || 0) + (request.wives?.length || 1) + 1,
+            currentJob: request.currentJob || '',
+            residenceStatus: request.residenceStatus || 'resident',
+            originalGovernorate: request.originalGovernorate || '',
+            originalCity: request.originalCity || '',
+            displacementAddress: request.displacementAddress || '',
+            areaId: request.areaId || ''
+          };
+
+          const newGuardian = await guardiansAPI.create(guardianData);
+          
+          // إضافة الأبناء إذا كانوا موجودين
+          let addedChildrenCount = 0;
+          if (request.children && request.children.length > 0) {
+            try {
+              for (const childData of request.children) {
+                // حساب العمر من تاريخ الميلاد
+                const birthDate = new Date(childData.birthDate);
+                const today = new Date();
+                const age = today.getFullYear() - birthDate.getFullYear();
+                const monthDiff = today.getMonth() - birthDate.getMonth();
+                const actualAge = monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate()) ? age - 1 : age;
+                
+                const childToAdd = {
+                  name: childData.name,
+                  nationalId: childData.nationalId,
+                  birthDate: childData.birthDate,
+                  age: actualAge,
+                  guardianId: newGuardian._id || '',
+                  guardianName: newGuardian.name,
+                  guardianNationalId: newGuardian.nationalId,
+                  areaId: newGuardian.areaId,
+                  areaName: newGuardian.areaName
+                };
+                
+                await childrenAPI.create(childToAdd);
+                addedChildrenCount++;
+              }
+            } catch (childrenError) {
+              console.error('Error adding children:', childrenError);
+              alert('تم إضافة ولي الأمر بنجاح ولكن حدث خطأ في إضافة الأبناء. يرجى إضافتهم يدوياً.');
+            }
+          }
+          
+          alert(`تمت الموافقة على الطلب وترحيل البيانات بنجاح!\nتم إضافة ولي الأمر: ${newGuardian.name}\nتم إضافة ${addedChildrenCount} من الأبناء\nعدد الزوجات: ${guardianData.wivesCount}`);
+        } catch (migrationError) {
+          console.error('Error migrating data to guardians:', migrationError);
+          alert('تمت الموافقة على الطلب ولكن حدث خطأ في ترحيل البيانات إلى جدول أولياء الأمور. يرجى التحقق من البيانات يدوياً.');
+        }
+      } catch (error) {
+        console.error('Error approving request:', error);
+        alert('حدث خطأ أثناء الموافقة على الطلب');
       }
-      
-      // هنا يمكن إضافة كود لترحيل البيانات إلى جداول أولياء الأمور والزوجات والأبناء
-      alert('تمت الموافقة على الطلب وترحيل البيانات بنجاح!');
     }
   };
 
-  const handleRejectRequest = (request: RegistrationRequest, reason: string) => {
-    const updatedRequests = requests.map(r => {
-      if (r.id === request.id) {
-        return {
-          ...r,
-          status: 'rejected',
-          updatedAt: new Date().toISOString(),
-          reviewedAt: new Date().toISOString(),
-          reviewedBy: 'المدير',
-          rejectionReason: reason
-        };
-      }
-      return r;
-    });
+  const handleRejectRequest = async (request: RegistrationRequest, reason: string) => {
+    if (!request._id) return;
     
-    setRequests(updatedRequests);
-    
-    // إذا كان الطلب مفتوح في نافذة التفاصيل، قم بتحديثه
-    if (selectedRequest && selectedRequest.id === request.id) {
-      setSelectedRequest({
-        ...selectedRequest,
+    try {
+      const updatedRequest = await registrationRequestsAPI.update(request._id, {
         status: 'rejected',
-        updatedAt: new Date().toISOString(),
         reviewedAt: new Date().toISOString(),
         reviewedBy: 'المدير',
         rejectionReason: reason
       });
+      
+      setRequests(prev => prev.map(r => r._id === request._id ? updatedRequest : r));
+      
+      // إذا كان الطلب مفتوح في نافذة التفاصيل، قم بتحديثه
+      if (selectedRequest && selectedRequest._id === request._id) {
+        setSelectedRequest(updatedRequest);
+      }
+    } catch (error) {
+      console.error('Error rejecting request:', error);
+      alert('حدث خطأ أثناء رفض الطلب');
     }
   };
 

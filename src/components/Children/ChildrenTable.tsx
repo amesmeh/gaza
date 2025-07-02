@@ -10,7 +10,7 @@ interface ChildrenTableProps {
   onView: (child: Child) => void;
   onEdit: (child: Child) => void;
   onDelete: (child: Child) => void;
-  onBulkDelete?: (childIds: number[]) => void;
+  onBulkDelete?: (childIds: string[]) => void;
   onInlineEdit?: (child: Child, field: string, value: any) => void;
   guardians?: any[]; // Added guardians prop
 }
@@ -24,7 +24,7 @@ export const ChildrenTable: React.FC<ChildrenTableProps> = ({
   onInlineEdit,
   guardians
 }) => {
-  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = useState(false);
 
   const {
@@ -34,7 +34,7 @@ export const ChildrenTable: React.FC<ChildrenTableProps> = ({
     setCurrentPage
   } = usePagination({ data: children, itemsPerPage: 25 });
 
-  const handleSelectRow = (id: number) => {
+  const handleSelectRow = (id: string) => {
     const newSelected = new Set(selectedRows);
     if (newSelected.has(id)) {
       newSelected.delete(id);
@@ -50,7 +50,7 @@ export const ChildrenTable: React.FC<ChildrenTableProps> = ({
       setSelectedRows(new Set());
       setSelectAll(false);
     } else {
-      setSelectedRows(new Set(paginatedData.map(c => c.id)));
+      setSelectedRows(new Set(paginatedData.map(c => c._id || '')));
       setSelectAll(true);
     }
   };
@@ -96,8 +96,8 @@ export const ChildrenTable: React.FC<ChildrenTableProps> = ({
       render: (value: any, row: Child) => (
         <input
           type="checkbox"
-          checked={selectedRows.has(row.id)}
-          onChange={() => handleSelectRow(row.id)}
+          checked={selectedRows.has(row._id || '')}
+          onChange={() => handleSelectRow(row._id || '')}
           className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
         />
       )
@@ -159,12 +159,32 @@ export const ChildrenTable: React.FC<ChildrenTableProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
+              onView(row);
+            }}
+            className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+            title="عرض"
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
               onEdit(row);
             }}
             className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
             title="تعديل"
           >
             <Edit className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(row);
+            }}
+            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            title="حذف"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
       )
@@ -247,8 +267,8 @@ export const ChildrenTable: React.FC<ChildrenTableProps> = ({
                   <td className="px-4 py-3 text-center border border-gray-200 w-12">
                     <input
                       type="checkbox"
-                      checked={selectedRows.has(child.id)}
-                      onChange={() => handleSelectRow(child.id)}
+                      checked={selectedRows.has(child._id || '')}
+                      onChange={() => handleSelectRow(child._id || '')}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                     />
                   </td>
@@ -275,12 +295,32 @@ export const ChildrenTable: React.FC<ChildrenTableProps> = ({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          onView(child);
+                        }}
+                        className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                        title="عرض"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
                           onEdit(child);
                         }}
                         className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                         title="تعديل"
                       >
                         <Edit className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(child);
+                        }}
+                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="حذف"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   </td>

@@ -1,5 +1,6 @@
 export interface User {
   id: number;
+  _id?: string;
   username: string;
   email: string;
   role: 'admin' | 'representative' | 'observer';
@@ -9,18 +10,20 @@ export interface User {
 }
 
 export interface Area {
-  id: number;
+  id?: number;
+  _id?: string;
   name: string;
-  representativeName: string;
-  representativeId: string;
-  representativePhone: string;
-  createdAt: string;
-  updatedAt: string;
+  representativeName?: string;
+  representativeId?: string;
+  representativePhone?: string;
+  createdAt?: string;
+  updatedAt?: string;
   guardiansCount?: number;
 }
 
 export interface Guardian {
-  id: number;
+  id?: number;
+  _id?: string;
   name: string;
   nationalId: string;
   phone: string;
@@ -34,136 +37,156 @@ export interface Guardian {
   originalGovernorate?: string;
   originalCity?: string;
   displacementAddress?: string;
-  areaId: number;
-  area?: Area;
-  createdAt: string;
-  updatedAt: string;
+  areaId?: string;
+  areaName?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Wife {
-  id: number;
+  id?: number;
+  _id?: string;
   name: string;
   nationalId: string;
-  husbandId: number;
+  husbandId: string;
   husbandNationalId: string;
   husbandName?: string;
-  areaId?: number;
+  areaId?: string;
   areaName?: string;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Child {
-  id: number;
+  id?: number;
+  _id?: string;
   name: string;
   nationalId: string;
   birthDate: string;
   age: number;
-  guardianId: number;
+  guardianId: string;
   guardianName?: string;
   guardianNationalId?: string;
-  areaId?: number;
+  areaId?: string;
   areaName?: string;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Aid {
-  id: number;
+  id?: number;
+  _id?: string;
   guardianNationalId: string;
   guardianName?: string;
   guardianPhone?: string;
   aidType: string;
   aidDate: string;
-  areaId?: number;
+  areaId?: string;
   areaName?: string;
   notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Martyr {
-  id: number;
+  id?: number;
+  _id?: string;
   name: string;
   nationalId: string;
+  birthDate: string;
+  age: number;
+  guardianId: string;
+  guardianName?: string;
+  guardianNationalId?: string;
+  areaId?: string;
+  areaName?: string;
   martyrdomDate: string;
-  agentName: string;
-  agentNationalId: string;
-  agentPhone: string;
-  relationshipToMartyr: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  martyrdomLocation?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Injured {
-  id: number;
+  id?: number;
+  _id?: string;
   name: string;
   nationalId: string;
-  phone: string;
+  birthDate: string;
+  age: number;
+  guardianId: string;
+  guardianName?: string;
+  guardianNationalId?: string;
+  areaId?: string;
+  areaName?: string;
   injuryDate: string;
-  injuryType: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  injuryType?: string;
+  injuryLocation?: string;
+  treatmentStatus?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface MedicalData {
-  id: number;
-  patientName: string;
-  patientNationalId: string;
-  guardianNationalId: string;
+  id?: number;
+  _id?: string;
+  guardianId: string;
   guardianName?: string;
-  diseaseType: string;
-  phone?: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  guardianNationalId?: string;
+  areaId?: string;
+  areaName?: string;
+  medicalCondition?: string;
+  medications?: string[];
+  allergies?: string[];
+  bloodType?: string;
+  emergencyContact?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Orphan {
-  id: number;
+  id?: number;
+  _id?: string;
   name: string;
   nationalId: string;
-  gender: 'male' | 'female';
   birthDate: string;
   age: number;
-  healthStatus: string;
-  educationalStage: string;
-  martyrNationalId: string;
-  martyrName: string;
-  martyrdomDate: string;
-  maleSiblingsCount: number;
-  femaleSiblingsCount: number;
-  guardianName: string;
-  guardianRelationship: string;
-  address: string;
-  phone: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  guardianId: string;
+  guardianName?: string;
+  guardianNationalId?: string;
+  areaId?: string;
+  areaName?: string;
+  orphanageStatus?: string;
+  supportType?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Damage {
-  id: number;
-  guardianNationalId: string;
+  id?: number;
+  _id?: string;
+  guardianId: string;
   guardianName?: string;
-  guardianPhone?: string;
-  areaId?: number;
+  guardianNationalId?: string;
+  areaId?: string;
   areaName?: string;
-  damageType: 'كلي' | 'جزئي';
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  damageType: string;
+  damageDate: string;
+  damageLocation?: string;
+  damageDescription?: string;
+  estimatedCost?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface RegistrationRequest {
-  id: number;
+  id?: number;
+  _id?: string;
   status: 'pending' | 'approved' | 'rejected';
   // بيانات ولي الأمر
   name: string;
   nationalId: string;
   phone: string;
+  email?: string;
   gender: 'male' | 'female';
   maritalStatus: string;
   currentJob?: string;
@@ -171,7 +194,7 @@ export interface RegistrationRequest {
   originalGovernorate?: string;
   originalCity?: string;
   displacementAddress?: string;
-  areaId: number;
+  areaId?: string;
   areaName?: string;
   // بيانات الزوجات والأبناء
   wives: {
@@ -185,8 +208,10 @@ export interface RegistrationRequest {
     gender: 'male' | 'female';
   }[];
   notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  requestType?: string;
+  requestDetails?: string;
+  createdAt?: string;
+  updatedAt?: string;
   reviewedAt?: string;
   reviewedBy?: string;
   rejectionReason?: string;

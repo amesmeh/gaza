@@ -2,7 +2,6 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Header } from './components/Layout/Header';
 import { Sidebar } from './components/Layout/Sidebar';
-import { mockAreas, mockGuardians, mockWives, mockChildren, mockAids, mockMartyrs, mockInjured, mockMedicalData, mockOrphans, mockDamages, mockRegistrationRequests } from './data/mockData';
 import { RegistrationRequestsPage } from './components/RegistrationRequests/RegistrationRequestsPage';
 import { OrphansPage } from './components/Orphans/OrphansPage';
 import { DamagesPage } from './components/Damages/DamagesPage';
@@ -21,9 +20,40 @@ import { ProtectedRoute } from './components/Auth/ProtectedRoute';
 import { UserManagement } from './components/Auth/UserManagement';
 import { Settings } from './components/Common/Settings';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { guardiansAPI, aidsAPI, areasAPI } from './services/api';
 
 const Dashboard = () => {
   const { user } = useAuth();
+  const [stats, setStats] = React.useState({
+    guardiansCount: 0,
+    aidsCount: 0,
+    areasCount: 0
+  });
+  const [isLoading, setIsLoading] = React.useState(true);
+  
+  React.useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const [guardians, aids, areas] = await Promise.all([
+          guardiansAPI.getAll(),
+          aidsAPI.getAll(),
+          areasAPI.getAll()
+        ]);
+        
+        setStats({
+          guardiansCount: guardians.length,
+          aidsCount: aids.length,
+          areasCount: areas.length
+        });
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Error fetching stats:', error);
+        setIsLoading(false);
+      }
+    };
+    
+    fetchStats();
+  }, []);
   
   return (
     <div className="bg-white p-6 rounded-xl shadow-sm">
@@ -33,22 +63,28 @@ const Dashboard = () => {
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
           <h3 className="text-lg font-bold text-blue-900 mb-2">أولياء الأمور</h3>
-          <p className="text-3xl font-bold text-blue-700">{mockGuardians.length}</p>
+          <p className="text-3xl font-bold text-blue-700">
+            {isLoading ? '...' : stats.guardiansCount}
+          </p>
         </div>
         
         <div className="bg-green-50 p-6 rounded-xl border border-green-100">
           <h3 className="text-lg font-bold text-green-900 mb-2">المساعدات</h3>
-          <p className="text-3xl font-bold text-green-700">{mockAids.length}</p>
+          <p className="text-3xl font-bold text-green-700">
+            {isLoading ? '...' : stats.aidsCount}
+          </p>
         </div>
         
         <div className="bg-red-50 p-6 rounded-xl border border-red-100">
           <h3 className="text-lg font-bold text-red-900 mb-2">الشهداء</h3>
-          <p className="text-3xl font-bold text-red-700">{mockMartyrs.length}</p>
+          <p className="text-3xl font-bold text-red-700">0</p>
         </div>
         
         <div className="bg-purple-50 p-6 rounded-xl border border-purple-100">
           <h3 className="text-lg font-bold text-purple-900 mb-2">المناطق</h3>
-          <p className="text-3xl font-bold text-purple-700">{mockAreas.length}</p>
+          <p className="text-3xl font-bold text-purple-700">
+            {isLoading ? '...' : stats.areasCount}
+          </p>
         </div>
       </div>
       

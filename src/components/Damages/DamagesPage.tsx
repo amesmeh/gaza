@@ -7,13 +7,12 @@ import { DamageTable } from './DamageTable';
 import { DamageAdvancedFilter } from './DamageAdvancedFilter';
 import { SimpleSearch } from '../Guardians/SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockDamages, mockGuardians, mockAreas } from '../../data/mockData';
 import { exportDamagesToExcel, createDamagesTemplate, importDamagesFromExcel, exportDamagesErrorsToExcel, downloadExcelFile } from '../../utils/damagesExcelUtils';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { damagesAPI, guardiansAPI } from '../../services/api';
 
 export const DamagesPage: React.FC = () => {
-  const [damages, setDamages] = useLocalStorage<Damage[]>('damages', mockDamages);
-  const [guardians, setGuardians] = useLocalStorage<Guardian[]>('guardians', mockGuardians);
+  const [damages, setDamages] = useState<Damage[]>([]);
+  const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -30,14 +29,17 @@ export const DamagesPage: React.FC = () => {
     searchTerm: ''
   });
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من الخادم
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        setIsLoading(true);
+        const [damagesData, guardiansData] = await Promise.all([
+          damagesAPI.getAll(),
+          guardiansAPI.getAll()
+        ]);
+        setDamages(damagesData);
+        setGuardians(guardiansData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -64,10 +66,9 @@ export const DamagesPage: React.FC = () => {
         return (
           (damage.guardianName && damage.guardianName.toLowerCase().includes(term)) ||
           damage.guardianNationalId.includes(term) ||
-          (damage.guardianPhone && damage.guardianPhone.includes(term)) ||
           (damage.areaName && damage.areaName.toLowerCase().includes(term)) ||
           damage.damageType.includes(term) ||
-          (damage.notes && damage.notes.toLowerCase().includes(term))
+          (damage.damageDescription && damage.damageDescription.toLowerCase().includes(term))
         );
       });
       
@@ -109,8 +110,7 @@ export const DamagesPage: React.FC = () => {
         filtered = filtered.filter(damage => 
           (damage.guardianName && damage.guardianName.toLowerCase().includes(term)) ||
           damage.guardianNationalId.includes(term) ||
-          (damage.guardianPhone && damage.guardianPhone.includes(term)) ||
-          (damage.notes && damage.notes.toLowerCase().includes(term))
+          (damage.damageDescription && damage.damageDescription.toLowerCase().includes(term))
         );
       }
       
@@ -127,33 +127,51 @@ export const DamagesPage: React.FC = () => {
            filters.searchTerm;
   };
 
-  const handleAddDamage = (data: Omit<Damage, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newDamage: Damage = {
-      ...data,
-      id: Math.max(0, ...damages.map(d => d.id)) + 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    setDamages([newDamage, ...damages]);
-    setIsAddModalOpen(false);
+  const handleAddDamage = async (data: Omit<Damage, '_id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = guardians.find(g => g._id === data.guardianId);
+      
+      const damageData = {
+        ...data,
+        guardianName: guardian?.name || '',
+        guardianNationalId: guardian?.nationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const newDamage = await damagesAPI.create(damageData);
+      setDamages(prev => [...prev, newDamage]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding damage:', error);
+      alert('حدث خطأ أثناء إضافة الضرر');
+    }
   };
 
-  const handleEditDamage = (data: Omit<Damage, 'id' | 'createdAt' | 'updatedAt'>) => {
-    if (!selectedDamage) return;
+  const handleEditDamage = async (data: Omit<Damage, '_id' | 'createdAt' | 'updatedAt'>) => {
+    if (!selectedDamage?._id) return;
     
-    const updatedDamage: Damage = {
-      ...data,
-      id: selectedDamage.id,
-      createdAt: selectedDamage.createdAt,
-      updatedAt: new Date().toISOString()
-    };
-    
-    setDamages(damages.map(damage => 
-      damage.id === selectedDamage.id ? updatedDamage : damage
-    ));
-    
-    setIsEditModalOpen(false);
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = guardians.find(g => g._id === data.guardianId);
+      
+      const damageData = {
+        ...data,
+        guardianName: guardian?.name || '',
+        guardianNationalId: guardian?.nationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const updatedDamage = await damagesAPI.update(selectedDamage._id, damageData);
+      setDamages(prev => prev.map(damage => damage._id === selectedDamage._id ? updatedDamage : damage));
+      setIsEditModalOpen(false);
+      setSelectedDamage(null);
+    } catch (error) {
+      console.error('Error updating damage:', error);
+      alert('حدث خطأ أثناء تحديث الضرر');
+    }
   };
 
   const handleViewDamage = (damage: Damage) => {
@@ -166,25 +184,45 @@ export const DamagesPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteDamage = (damage: Damage) => {
+  const handleDeleteDamage = async (damage: Damage) => {
+    if (!damage._id) return;
+    
     if (window.confirm(`هل أنت متأكد من حذف سجل الضرر لـ ${damage.guardianName || damage.guardianNationalId}؟`)) {
-      setDamages(damages.filter(d => d.id !== damage.id));
+      try {
+        await damagesAPI.delete(damage._id);
+        setDamages(prev => prev.filter(d => d._id !== damage._id));
+      } catch (error) {
+        console.error('Error deleting damage:', error);
+        alert('حدث خطأ أثناء حذف الضرر');
+      }
     }
   };
 
-  const handleBulkDelete = (damageIds: number[]) => {
-    setDamages(damages.filter(damage => !damageIds.includes(damage.id)));
+  const handleBulkDelete = async (damageIds: string[]) => {
+    if (window.confirm(`هل أنت متأكد من حذف ${damageIds.length} ضرر؟`)) {
+      try {
+        // حذف واحد تلو الآخر لأن API لا يدعم حذف متعدد
+        for (const id of damageIds) {
+          await damagesAPI.delete(id);
+        }
+        setDamages(prev => prev.filter(damage => !damageIds.includes(damage._id || '')));
+      } catch (error) {
+        console.error('Error bulk deleting damages:', error);
+        alert('حدث خطأ أثناء حذف الأضرار');
+      }
+    }
   };
 
-  const handleInlineEdit = (damage: Damage, field: string, value: any) => {
-    const updatedDamages = damages.map(d => {
-      if (d.id === damage.id) {
-        return { ...d, [field]: value, updatedAt: new Date().toISOString() };
-      }
-      return d;
-    });
+  const handleInlineEdit = async (damage: Damage, field: string, value: any) => {
+    if (!damage._id) return;
     
-    setDamages(updatedDamages);
+    try {
+      const updatedDamage = await damagesAPI.update(damage._id, { [field]: value });
+      setDamages(prev => prev.map(d => d._id === damage._id ? updatedDamage : d));
+    } catch (error) {
+      console.error('Error updating damage:', error);
+      alert('حدث خطأ أثناء تحديث الضرر');
+    }
   };
 
   const handleFiltersChange = (newFilters: typeof filters) => {
@@ -199,7 +237,7 @@ export const DamagesPage: React.FC = () => {
     });
   };
 
-  // استيراد بيانات أصحاب الأضرار من ملف Excel
+  // استيراد بيانات الأضرار من ملف Excel
   const handleImportDamages = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -210,19 +248,26 @@ export const DamagesPage: React.FC = () => {
       if (errors.length > 0) {
         alert(`تم العثور على ${errors.length} أخطاء في ملف الاستيراد. سيتم تنزيل ملف الأخطاء.`);
         const errorWorkbook = exportDamagesErrorsToExcel(errors);
-        downloadExcelFile(errorWorkbook, 'أخطاء-استيراد-أصحاب-الأضرار');
+        downloadExcelFile(errorWorkbook, 'أخطاء-استيراد-الأضرار');
       }
       
       if (validDamages.length > 0) {
-        const newDamages = validDamages.map((damageData, index) => ({
-          ...damageData,
-          id: Math.max(0, ...damages.map(d => d.id)) + index + 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })) as Damage[];
+        const newDamages = await Promise.all(
+          validDamages.map(async (damageData) => {
+            const guardian = guardians.find(g => g._id === damageData.guardianId);
+            const damageToCreate = {
+              ...damageData,
+              guardianName: guardian?.name || '',
+              guardianNationalId: guardian?.nationalId || '',
+              areaId: guardian?.areaId || '',
+              areaName: guardian?.areaName || ''
+            };
+            return await damagesAPI.create(damageToCreate);
+          })
+        );
         
-        setDamages([...newDamages, ...damages]);
-        alert(`تم استيراد ${newDamages.length} سجل ضرر بنجاح.`);
+        setDamages(prev => [...newDamages, ...prev]);
+        alert(`تم استيراد ${newDamages.length} ضرر بنجاح.`);
       } else {
         alert('لم يتم استيراد أي بيانات. يرجى التحقق من الملف والأخطاء.');
       }
@@ -235,22 +280,22 @@ export const DamagesPage: React.FC = () => {
     event.target.value = '';
   };
 
-  // تصدير بيانات أصحاب الأضرار إلى ملف Excel
+  // تصدير بيانات الأضرار إلى ملف Excel
   const handleExportDamages = () => {
     try {
       const workbook = exportDamagesToExcel(filteredDamages.length > 0 ? filteredDamages : damages);
-      downloadExcelFile(workbook, 'بيانات-أصحاب-الأضرار');
+      downloadExcelFile(workbook, 'بيانات-الأضرار');
     } catch (error) {
       console.error('Error exporting damages:', error);
       alert('حدث خطأ أثناء تصدير البيانات');
     }
   };
 
-  // تنزيل قالب Excel لأصحاب الأضرار
+  // تنزيل قالب Excel للأضرار
   const handleDownloadTemplate = () => {
     try {
       const workbook = createDamagesTemplate(guardians);
-      downloadExcelFile(workbook, 'قالب-أصحاب-الأضرار');
+      downloadExcelFile(workbook, 'قالب-الأضرار');
     } catch (error) {
       console.error('Error creating template:', error);
       alert('حدث خطأ أثناء إنشاء القالب');
@@ -344,7 +389,10 @@ export const DamagesPage: React.FC = () => {
       {/* فلاتر البحث المتقدمة */}
       <DamageAdvancedFilter
         filters={filters}
-        areas={mockAreas}
+        areas={guardians.map(g => ({
+          id: g._id,
+          name: g.areaName
+        }))}
         onFiltersChange={handleFiltersChange}
         onSearch={() => {}}
         onReset={resetFilters}

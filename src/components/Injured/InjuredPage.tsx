@@ -7,13 +7,12 @@ import { InjuredTable } from './InjuredTable';
 import { InjuredAdvancedFilter } from './InjuredAdvancedFilter';
 import { SimpleSearch } from '../Guardians/SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockInjured, mockGuardians } from '../../data/mockData';
 import { exportInjuredToExcel, createInjuredTemplate, importInjuredFromExcel, exportInjuredErrorsToExcel, downloadExcelFile } from '../../utils/injuredExcelUtils';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { injuredAPI, guardiansAPI } from '../../services/api';
 
 export const InjuredPage: React.FC = () => {
-  const [injured, setInjured] = useLocalStorage<Injured[]>('injured', mockInjured);
-  const [guardians, setGuardians] = useLocalStorage<Guardian[]>('guardians', mockGuardians);
+  const [injured, setInjured] = useState<Injured[]>([]);
+  const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -29,14 +28,17 @@ export const InjuredPage: React.FC = () => {
     dateRange: { from: '', to: '' }
   });
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من الخادم
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        setIsLoading(true);
+        const [injuredData, guardiansData] = await Promise.all([
+          injuredAPI.getAll(),
+          guardiansAPI.getAll()
+        ]);
+        setInjured(injuredData);
+        setGuardians(guardiansData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -63,9 +65,10 @@ export const InjuredPage: React.FC = () => {
         return (
           injuredPerson.name.toLowerCase().includes(term) ||
           injuredPerson.nationalId.includes(term) ||
-          injuredPerson.phone.includes(term) ||
-          injuredPerson.injuryType.toLowerCase().includes(term) ||
-          (injuredPerson.notes && injuredPerson.notes.toLowerCase().includes(term))
+          (injuredPerson.guardianName && injuredPerson.guardianName.toLowerCase().includes(term)) ||
+          (injuredPerson.guardianNationalId && injuredPerson.guardianNationalId.includes(term)) ||
+          (injuredPerson.areaName && injuredPerson.areaName.toLowerCase().includes(term)) ||
+          (injuredPerson.injuryType && injuredPerson.injuryType.toLowerCase().includes(term))
         );
       });
       
@@ -117,33 +120,51 @@ export const InjuredPage: React.FC = () => {
            filters.dateRange.to;
   };
 
-  const handleAddInjured = (data: Omit<Injured, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newInjured: Injured = {
-      ...data,
-      id: Math.max(0, ...injured.map(i => i.id)) + 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    setInjured([newInjured, ...injured]);
-    setIsAddModalOpen(false);
+  const handleAddInjured = async (data: Omit<Injured, '_id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = guardians.find(g => g._id === data.guardianId);
+      
+      const injuredData = {
+        ...data,
+        guardianName: guardian?.name || '',
+        guardianNationalId: guardian?.nationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const newInjured = await injuredAPI.create(injuredData);
+      setInjured(prev => [...prev, newInjured]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding injured:', error);
+      alert('حدث خطأ أثناء إضافة الجريح');
+    }
   };
 
-  const handleEditInjured = (data: Omit<Injured, 'id' | 'createdAt' | 'updatedAt'>) => {
-    if (!selectedInjured) return;
+  const handleEditInjured = async (data: Omit<Injured, '_id' | 'createdAt' | 'updatedAt'>) => {
+    if (!selectedInjured?._id) return;
     
-    const updatedInjured: Injured = {
-      ...data,
-      id: selectedInjured.id,
-      createdAt: selectedInjured.createdAt,
-      updatedAt: new Date().toISOString()
-    };
-    
-    setInjured(injured.map(injuredPerson => 
-      injuredPerson.id === selectedInjured.id ? updatedInjured : injuredPerson
-    ));
-    
-    setIsEditModalOpen(false);
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = guardians.find(g => g._id === data.guardianId);
+      
+      const injuredData = {
+        ...data,
+        guardianName: guardian?.name || '',
+        guardianNationalId: guardian?.nationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const updatedInjured = await injuredAPI.update(selectedInjured._id, injuredData);
+      setInjured(prev => prev.map(injuredPerson => injuredPerson._id === selectedInjured._id ? updatedInjured : injuredPerson));
+      setIsEditModalOpen(false);
+      setSelectedInjured(null);
+    } catch (error) {
+      console.error('Error updating injured:', error);
+      alert('حدث خطأ أثناء تحديث الجريح');
+    }
   };
 
   const handleViewInjured = (injuredPerson: Injured) => {
@@ -156,25 +177,42 @@ export const InjuredPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteInjured = (injuredPerson: Injured) => {
+  const handleDeleteInjured = async (injuredPerson: Injured) => {
+    if (!injuredPerson._id) return;
+    
     if (window.confirm(`هل أنت متأكد من حذف الجريح ${injuredPerson.name}؟`)) {
-      setInjured(injured.filter(i => i.id !== injuredPerson.id));
+      try {
+        await injuredAPI.delete(injuredPerson._id);
+        setInjured(prev => prev.filter(i => i._id !== injuredPerson._id));
+      } catch (error) {
+        console.error('Error deleting injured:', error);
+        alert('حدث خطأ أثناء حذف الجريح');
+      }
     }
   };
 
-  const handleBulkDelete = (injuredIds: number[]) => {
-    setInjured(injured.filter(injuredPerson => !injuredIds.includes(injuredPerson.id)));
+  const handleBulkDelete = async (injuredIds: string[]) => {
+    if (window.confirm(`هل أنت متأكد من حذف ${injuredIds.length} جريح؟`)) {
+      try {
+        await injuredAPI.deleteMany(injuredIds);
+        setInjured(prev => prev.filter(injuredPerson => !injuredIds.includes(injuredPerson._id || '')));
+      } catch (error) {
+        console.error('Error bulk deleting injured:', error);
+        alert('حدث خطأ أثناء حذف الجرحى');
+      }
+    }
   };
 
-  const handleInlineEdit = (injuredPerson: Injured, field: string, value: any) => {
-    const updatedInjured = injured.map(i => {
-      if (i.id === injuredPerson.id) {
-        return { ...i, [field]: value, updatedAt: new Date().toISOString() };
-      }
-      return i;
-    });
+  const handleInlineEdit = async (injuredPerson: Injured, field: string, value: any) => {
+    if (!injuredPerson._id) return;
     
-    setInjured(updatedInjured);
+    try {
+      const updatedInjured = await injuredAPI.update(injuredPerson._id, { [field]: value });
+      setInjured(prev => prev.map(i => i._id === injuredPerson._id ? updatedInjured : i));
+    } catch (error) {
+      console.error('Error updating injured:', error);
+      alert('حدث خطأ أثناء تحديث الجريح');
+    }
   };
 
   const handleFiltersChange = (newFilters: typeof filters) => {
@@ -203,14 +241,21 @@ export const InjuredPage: React.FC = () => {
       }
       
       if (validInjured.length > 0) {
-        const newInjured = validInjured.map((injuredData, index) => ({
-          ...injuredData,
-          id: Math.max(0, ...injured.map(i => i.id)) + index + 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })) as Injured[];
+        const newInjured = await Promise.all(
+          validInjured.map(async (injuredData) => {
+            const guardian = guardians.find(g => g._id === injuredData.guardianId);
+            const injuredToCreate = {
+              ...injuredData,
+              guardianName: guardian?.name || '',
+              guardianNationalId: guardian?.nationalId || '',
+              areaId: guardian?.areaId || '',
+              areaName: guardian?.areaName || ''
+            };
+            return await injuredAPI.create(injuredToCreate);
+          })
+        );
         
-        setInjured([...newInjured, ...injured]);
+        setInjured(prev => [...newInjured, ...prev]);
         alert(`تم استيراد ${newInjured.length} جريح بنجاح.`);
       } else {
         alert('لم يتم استيراد أي بيانات. يرجى التحقق من الملف والأخطاء.');

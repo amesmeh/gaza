@@ -7,21 +7,21 @@ import { GuardiansTable } from './GuardiansTable';
 import { AdvancedSearchFilter } from './AdvancedSearchFilter';
 import { SimpleSearch } from './SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockGuardians, mockAreas, mockWives, mockChildren } from '../../data/mockData';
 import { exportGuardiansToExcel, createGuardiansTemplate, importGuardiansFromExcel, exportErrorsToExcel, downloadExcelFile } from '../../utils/excelUtils';
 import { useAuth } from '../../context/AuthContext';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { smartSearch } from '../../utils/smartSearch';
+import { guardiansAPI, areasAPI, Guardian as GuardianFromAPI, Area as AreaFromAPI } from '../../services/api';
 
 export const GuardiansPage: React.FC = () => {
-  const [guardians, setGuardians] = useLocalStorage<Guardian[]>('guardians', mockGuardians);
-  const [areas, setAreas] = useLocalStorage<Area[]>('areas', mockAreas);
-  const [wives, setWives] = useLocalStorage<Wife[]>('wives', mockWives);
-  const [children, setChildren] = useLocalStorage<Child[]>('children', mockChildren);
+  const [guardians, setGuardians] = useState<Guardian[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
+  const [wives, setWives] = useState<Wife[]>([]);
+  const [children, setChildren] = useState<Child[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [filteredGuardians, setFilteredGuardians] = useState<Guardian[]>([]);
+  const [error, setError] = useState<string | null>(null);
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -40,31 +40,74 @@ export const GuardiansPage: React.FC = () => {
 
   const { user } = useAuth();
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من قاعدة البيانات
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
+        setIsLoading(true);
+        setError(null);
+        
+        // جلب أولياء الأمور والمناطق من قاعدة البيانات
+        const [guardiansData, areasData] = await Promise.all([
+          guardiansAPI.getAll(),
+          areasAPI.getAll()
+        ]);
+        
+        // تحويل بيانات أولياء الأمور من API إلى التنسيق المطلوب
+        const convertedGuardians: Guardian[] = guardiansData.map((guardian: GuardianFromAPI) => ({
+          id: parseInt(guardian._id?.slice(-6) || '0', 16),
+          name: guardian.name,
+          nationalId: guardian.nationalId,
+          phone: guardian.phone,
+          gender: guardian.gender,
+          maritalStatus: guardian.maritalStatus,
+          childrenCount: guardian.childrenCount,
+          wivesCount: guardian.wivesCount,
+          familyMembersCount: guardian.familyMembersCount,
+          currentJob: guardian.currentJob,
+          residenceStatus: guardian.residenceStatus,
+          originalGovernorate: guardian.originalGovernorate,
+          originalCity: guardian.originalCity,
+          displacementAddress: guardian.displacementAddress,
+          areaId: parseInt(guardian.areaId || '0'),
+          createdAt: guardian.createdAt || new Date().toISOString(),
+          updatedAt: guardian.updatedAt || new Date().toISOString()
+        }));
+        
+        // تحويل بيانات المناطق من API إلى التنسيق المطلوب
+        const convertedAreas: Area[] = areasData.map((area: AreaFromAPI) => ({
+          id: parseInt(area._id?.slice(-6) || '0', 16),
+          name: area.name,
+          representativeName: area.representativeName || '',
+          representativeId: area.representativeId || '',
+          representativePhone: area.representativePhone || '',
+          createdAt: area.createdAt || new Date().toISOString(),
+          updatedAt: area.updatedAt || new Date().toISOString(),
+          guardiansCount: convertedGuardians.filter(g => g.areaId === parseInt(area._id?.slice(-6) || '0', 16)).length
+        }));
         
         // فلترة البيانات حسب صلاحيات المستخدم
-        let guardiansData = [...guardians];
+        let filteredGuardiansData = [...convertedGuardians];
+        let filteredAreasData = [...convertedAreas];
         
         // إذا كان المستخدم مندوب منطقة، قم بفلترة البيانات حسب المنطقة
         if (user?.role === 'representative' && user?.areaId) {
-          guardiansData = guardiansData.filter(guardian => guardian.areaId === user.areaId);
+          filteredGuardiansData = filteredGuardiansData.filter(guardian => guardian.areaId === user.areaId);
+          filteredAreasData = filteredAreasData.filter(area => area.id === user.areaId);
         }
         
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        setGuardians(filteredGuardiansData);
+        setAreas(filteredAreasData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
+        setError('فشل في جلب البيانات من قاعدة البيانات');
         setIsLoading(false);
       }
     };
 
     fetchData();
-  }, [user, guardians]);
+  }, [user]);
 
   // فلترة البيانات مع البحث الذكي
   useEffect(() => {
@@ -144,43 +187,117 @@ export const GuardiansPage: React.FC = () => {
            filters.searchTerm;
   };
 
-  const handleAddGuardian = (data: Omit<Guardian, 'id' | 'createdAt' | 'updatedAt'>) => {
-    // إذا كان المستخدم مندوب منطقة، تأكد من أن ولي الأمر الجديد ينتمي إلى منطقته
-    if (user?.role === 'representative' && user?.areaId) {
-      data.areaId = user.areaId;
+  const handleAddGuardian = async (data: Omit<Guardian, 'id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      // إذا كان المستخدم مندوب منطقة، تأكد من أن ولي الأمر الجديد ينتمي إلى منطقته
+      if (user?.role === 'representative' && user?.areaId) {
+        data.areaId = user.areaId;
+      }
+      
+      // إضافة ولي الأمر إلى قاعدة البيانات
+      const newGuardian = await guardiansAPI.create({
+        name: data.name,
+        nationalId: data.nationalId,
+        phone: data.phone,
+        gender: data.gender,
+        maritalStatus: data.maritalStatus,
+        childrenCount: data.childrenCount,
+        wivesCount: data.wivesCount,
+        familyMembersCount: data.familyMembersCount,
+        currentJob: data.currentJob,
+        residenceStatus: data.residenceStatus,
+        originalGovernorate: data.originalGovernorate,
+        originalCity: data.originalCity,
+        displacementAddress: data.displacementAddress,
+        areaId: data.areaId.toString()
+      });
+      
+      // إضافة ولي الأمر الجديد إلى القائمة المحلية
+      const convertedGuardian: Guardian = {
+        id: parseInt(newGuardian._id?.slice(-6) || '0', 16),
+        name: newGuardian.name,
+        nationalId: newGuardian.nationalId,
+        phone: newGuardian.phone,
+        gender: newGuardian.gender,
+        maritalStatus: newGuardian.maritalStatus,
+        childrenCount: newGuardian.childrenCount,
+        wivesCount: newGuardian.wivesCount,
+        familyMembersCount: newGuardian.familyMembersCount,
+        currentJob: newGuardian.currentJob,
+        residenceStatus: newGuardian.residenceStatus,
+        originalGovernorate: newGuardian.originalGovernorate,
+        originalCity: newGuardian.originalCity,
+        displacementAddress: newGuardian.displacementAddress,
+        areaId: parseInt(newGuardian.areaId || '0'),
+        createdAt: newGuardian.createdAt || new Date().toISOString(),
+        updatedAt: newGuardian.updatedAt || new Date().toISOString()
+      };
+      
+      setGuardians([convertedGuardian, ...guardians]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding guardian:', error);
+      setError('فشل في إضافة ولي الأمر');
     }
-    
-    const newGuardian: Guardian = {
-      ...data,
-      id: Math.max(0, ...guardians.map(g => g.id)) + 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    setGuardians([newGuardian, ...guardians]);
-    setIsAddModalOpen(false);
   };
 
-  const handleEditGuardian = (data: Omit<Guardian, 'id' | 'createdAt' | 'updatedAt'>) => {
+  const handleEditGuardian = async (data: Omit<Guardian, 'id' | 'createdAt' | 'updatedAt'>) => {
     if (!selectedGuardian) return;
     
-    // إذا كان المستخدم مندوب منطقة، تأكد من أن ولي الأمر المعدل ينتمي إلى منطقته
-    if (user?.role === 'representative' && user?.areaId) {
-      data.areaId = user.areaId;
+    try {
+      // إذا كان المستخدم مندوب منطقة، تأكد من أن ولي الأمر المعدل ينتمي إلى منطقته
+      if (user?.role === 'representative' && user?.areaId) {
+        data.areaId = user.areaId;
+      }
+      
+      // تحديث ولي الأمر في قاعدة البيانات
+      const updatedGuardian = await guardiansAPI.update(selectedGuardian._id || '', {
+        name: data.name,
+        nationalId: data.nationalId,
+        phone: data.phone,
+        gender: data.gender,
+        maritalStatus: data.maritalStatus,
+        childrenCount: data.childrenCount,
+        wivesCount: data.wivesCount,
+        familyMembersCount: data.familyMembersCount,
+        currentJob: data.currentJob,
+        residenceStatus: data.residenceStatus,
+        originalGovernorate: data.originalGovernorate,
+        originalCity: data.originalCity,
+        displacementAddress: data.displacementAddress,
+        areaId: data.areaId.toString()
+      });
+      
+      // تحديث ولي الأمر في القائمة المحلية
+      const convertedGuardian: Guardian = {
+        id: selectedGuardian.id,
+        name: updatedGuardian.name,
+        nationalId: updatedGuardian.nationalId,
+        phone: updatedGuardian.phone,
+        gender: updatedGuardian.gender,
+        maritalStatus: updatedGuardian.maritalStatus,
+        childrenCount: updatedGuardian.childrenCount,
+        wivesCount: updatedGuardian.wivesCount,
+        familyMembersCount: updatedGuardian.familyMembersCount,
+        currentJob: updatedGuardian.currentJob,
+        residenceStatus: updatedGuardian.residenceStatus,
+        originalGovernorate: updatedGuardian.originalGovernorate,
+        originalCity: updatedGuardian.originalCity,
+        displacementAddress: updatedGuardian.displacementAddress,
+        areaId: parseInt(updatedGuardian.areaId || '0'),
+        createdAt: selectedGuardian.createdAt,
+        updatedAt: new Date().toISOString()
+      };
+      
+      setGuardians(guardians.map(guardian => 
+        guardian.id === selectedGuardian.id ? convertedGuardian : guardian
+      ));
+      
+      setIsEditModalOpen(false);
+    } catch (error) {
+      console.error('Error updating guardian:', error);
+      setError('فشل في تحديث ولي الأمر');
     }
-    
-    const updatedGuardian: Guardian = {
-      ...data,
-      id: selectedGuardian.id,
-      createdAt: selectedGuardian.createdAt,
-      updatedAt: new Date().toISOString()
-    };
-    
-    setGuardians(guardians.map(guardian => 
-      guardian.id === selectedGuardian.id ? updatedGuardian : guardian
-    ));
-    
-    setIsEditModalOpen(false);
   };
 
   const handleViewGuardian = (guardian: Guardian) => {
@@ -193,22 +310,54 @@ export const GuardiansPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteGuardian = (guardian: Guardian) => {
+  const handleDeleteGuardian = async (guardian: Guardian) => {
     if (window.confirm(`هل أنت متأكد أنك تريد حذف ولي الأمر "${guardian.name}"؟`)) {
-      setGuardians(guardians.filter(g => g.id !== guardian.id));
+      try {
+        // حذف ولي الأمر من قاعدة البيانات
+        await guardiansAPI.delete(guardian._id || '');
+        
+        // حذف ولي الأمر من القائمة المحلية
+        setGuardians(guardians.filter(g => g.id !== guardian.id));
+      } catch (error) {
+        console.error('Error deleting guardian:', error);
+        setError('فشل في حذف ولي الأمر');
+      }
     }
   };
 
-  const handleBulkDelete = (guardianIds: number[]) => {
+  const handleBulkDelete = async (guardianIds: number[]) => {
     if (window.confirm(`هل أنت متأكد أنك تريد حذف ${guardianIds.length} من أولياء الأمور؟`)) {
-      setGuardians(guardians.filter(g => !guardianIds.includes(g.id)));
+      try {
+        // حذف أولياء الأمور من قاعدة البيانات
+        const deletePromises = guardianIds.map(id => {
+          const guardian = guardians.find(g => g.id === id);
+          return guardian ? guardiansAPI.delete(guardian._id || '') : Promise.resolve();
+        });
+        
+        await Promise.all(deletePromises);
+        
+        // حذف أولياء الأمور من القائمة المحلية
+        setGuardians(guardians.filter(g => !guardianIds.includes(g.id)));
+      } catch (error) {
+        console.error('Error bulk deleting guardians:', error);
+        setError('فشل في حذف أولياء الأمور المحددين');
+      }
     }
   };
 
-  const handleInlineEdit = (guardian: Guardian, field: string, value: any) => {
-    setGuardians(guardians.map(g => 
-      g.id === guardian.id ? { ...g, [field]: value, updatedAt: new Date().toISOString() } : g
-    ));
+  const handleInlineEdit = async (guardian: Guardian, field: string, value: any) => {
+    try {
+      // تحديث ولي الأمر في قاعدة البيانات
+      await guardiansAPI.update(guardian._id || '', { [field]: value });
+      
+      // تحديث ولي الأمر في القائمة المحلية
+      setGuardians(guardians.map(g => 
+        g.id === guardian.id ? { ...g, [field]: value, updatedAt: new Date().toISOString() } : g
+      ));
+    } catch (error) {
+      console.error('Error inline editing guardian:', error);
+      setError('فشل في تحديث ولي الأمر');
+    }
   };
 
   const handleFiltersChange = (newFilters: typeof filters) => {
@@ -253,15 +402,51 @@ export const GuardiansPage: React.FC = () => {
       }
       
       if (filteredGuardians.length > 0) {
-        const newGuardians = filteredGuardians.map((guardianData, index) => ({
-          ...guardianData,
-          id: Math.max(0, ...guardians.map(g => g.id)) + index + 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })) as Guardian[];
+        // إضافة أولياء الأمور إلى قاعدة البيانات
+        const addPromises = filteredGuardians.map(guardianData => 
+          guardiansAPI.create({
+            name: guardianData.name,
+            nationalId: guardianData.nationalId,
+            phone: guardianData.phone,
+            gender: guardianData.gender,
+            maritalStatus: guardianData.maritalStatus,
+            childrenCount: guardianData.childrenCount,
+            wivesCount: guardianData.wivesCount,
+            familyMembersCount: guardianData.familyMembersCount,
+            currentJob: guardianData.currentJob,
+            residenceStatus: guardianData.residenceStatus,
+            originalGovernorate: guardianData.originalGovernorate,
+            originalCity: guardianData.originalCity,
+            displacementAddress: guardianData.displacementAddress,
+            areaId: guardianData.areaId.toString()
+          })
+        );
         
-        setGuardians([...newGuardians, ...guardians]);
-        alert(`تم استيراد ${newGuardians.length} ولي أمر بنجاح.`);
+        const newGuardians = await Promise.all(addPromises);
+        
+        // تحويل البيانات وإضافتها للقائمة المحلية
+        const convertedGuardians: Guardian[] = newGuardians.map((newGuardian, index) => ({
+          id: parseInt(newGuardian._id?.slice(-6) || '0', 16),
+          name: newGuardian.name,
+          nationalId: newGuardian.nationalId,
+          phone: newGuardian.phone,
+          gender: newGuardian.gender,
+          maritalStatus: newGuardian.maritalStatus,
+          childrenCount: newGuardian.childrenCount,
+          wivesCount: newGuardian.wivesCount,
+          familyMembersCount: newGuardian.familyMembersCount,
+          currentJob: newGuardian.currentJob,
+          residenceStatus: newGuardian.residenceStatus,
+          originalGovernorate: newGuardian.originalGovernorate,
+          originalCity: newGuardian.originalCity,
+          displacementAddress: newGuardian.displacementAddress,
+          areaId: parseInt(newGuardian.areaId || '0'),
+          createdAt: newGuardian.createdAt || new Date().toISOString(),
+          updatedAt: newGuardian.updatedAt || new Date().toISOString()
+        }));
+        
+        setGuardians([...convertedGuardians, ...guardians]);
+        alert(`تم استيراد ${convertedGuardians.length} ولي أمر بنجاح.`);
       } else {
         alert('لم يتم استيراد أي بيانات. يرجى التحقق من الملف والأخطاء.');
       }
@@ -380,6 +565,28 @@ export const GuardiansPage: React.FC = () => {
 
   return (
     <div className="space-y-6 p-4 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
+      {/* رسائل الخطأ */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <div className="flex-shrink-0">
+              <div className="w-5 h-5 bg-red-400 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm font-bold">!</span>
+              </div>
+            </div>
+            <div className="mr-3">
+              <p className="text-red-800 font-medium">{error}</p>
+            </div>
+            <button
+              onClick={() => setError(null)}
+              className="mr-auto text-red-400 hover:text-red-600"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* العنوان وأزرار الإجراءات */}
       <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -436,9 +643,19 @@ export const GuardiansPage: React.FC = () => {
 
             {/* زر حذف الكل */}
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (window.confirm('هل أنت متأكد أنك تريد حذف جميع أولياء الأمور؟ لا يمكن التراجع عن هذه العملية.')) {
-                  setGuardians([]);
+                  try {
+                    // حذف جميع أولياء الأمور من قاعدة البيانات
+                    const deletePromises = guardians.map(guardian => guardiansAPI.delete(guardian._id || ''));
+                    await Promise.all(deletePromises);
+                    
+                    // حذف جميع أولياء الأمور من القائمة المحلية
+                    setGuardians([]);
+                  } catch (error) {
+                    console.error('Error deleting all guardians:', error);
+                    setError('فشل في حذف جميع أولياء الأمور');
+                  }
                 }
               }}
               className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg hover:from-red-700 hover:to-red-800 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm"

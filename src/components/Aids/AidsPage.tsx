@@ -7,15 +7,13 @@ import { AidsTable } from './AidsTable';
 import { AidsAdvancedFilter } from './AidsAdvancedFilter';
 import { SimpleSearch } from '../Guardians/SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockAids, mockGuardians, mockAreas } from '../../data/mockData';
 import { exportAidsToExcel, createAidsTemplate, importAidsFromExcel, exportAidsErrorsToExcel, exportAidsWarningsToExcel, downloadExcelFile } from '../../utils/aidsExcelUtils';
 import { useAuth } from '../../context/AuthContext';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
-import { aidsAPI, Aid as AidFromAPI } from '../../services/api';
+import { aidsAPI, guardiansAPI, Aid as AidFromAPI, Guardian as GuardianFromAPI } from '../../services/api';
 
 export const AidsPage: React.FC = () => {
   const [aids, setAids] = useState<Aid[]>([]);
-  const [guardians, setGuardians] = useLocalStorage<Guardian[]>('guardians', mockGuardians);
+  const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -44,10 +42,13 @@ export const AidsPage: React.FC = () => {
         setIsLoading(true);
         setError(null);
         
-        // جلب المساعدات من قاعدة البيانات
-        const aidsData = await aidsAPI.getAll();
+        // جلب المساعدات وأولياء الأمور من قاعدة البيانات
+        const [aidsData, guardiansData] = await Promise.all([
+          aidsAPI.getAll(),
+          guardiansAPI.getAll()
+        ]);
         
-        // تحويل البيانات من API إلى التنسيق المطلوب
+        // تحويل بيانات المساعدات من API إلى التنسيق المطلوب
         const convertedAids: Aid[] = aidsData.map((aid: AidFromAPI) => ({
           id: parseInt(aid._id?.slice(-6) || '0', 16), // تحويل ObjectId إلى رقم
           guardianNationalId: aid.guardianNationalId,
@@ -61,15 +62,42 @@ export const AidsPage: React.FC = () => {
           updatedAt: aid.updatedAt || new Date().toISOString()
         }));
         
+        // تحويل بيانات أولياء الأمور من API إلى التنسيق المطلوب
+        const convertedGuardians: Guardian[] = guardiansData.map((guardian: GuardianFromAPI) => ({
+          id: parseInt(guardian._id?.slice(-6) || '0', 16),
+          name: guardian.name,
+          nationalId: guardian.nationalId,
+          phone: guardian.phone,
+          gender: guardian.gender,
+          maritalStatus: guardian.maritalStatus,
+          childrenCount: guardian.childrenCount,
+          wivesCount: guardian.wivesCount,
+          familyMembersCount: guardian.familyMembersCount,
+          currentJob: guardian.currentJob,
+          residenceStatus: guardian.residenceStatus,
+          originalGovernorate: guardian.originalGovernorate,
+          originalCity: guardian.originalCity,
+          displacementAddress: guardian.displacementAddress,
+          areaId: parseInt(guardian.areaId || '0'),
+          createdAt: guardian.createdAt || new Date().toISOString(),
+          updatedAt: guardian.updatedAt || new Date().toISOString()
+        }));
+        
         // فلترة البيانات حسب صلاحيات المستخدم
-        let filteredData = [...convertedAids];
+        let filteredAidsData = [...convertedAids];
+        let filteredGuardiansData = [...convertedGuardians];
         
         // إذا كان المستخدم مندوب منطقة، قم بفلترة البيانات حسب المنطقة
         if (user?.role === 'representative' && user?.areaId) {
-          filteredData = filteredData.filter(aid => aid.areaId === user.areaId);
+          filteredAidsData = filteredAidsData.filter(aid => {
+            const guardian = convertedGuardians.find(g => g.nationalId === aid.guardianNationalId);
+            return guardian && guardian.areaId === user.areaId;
+          });
+          filteredGuardiansData = filteredGuardiansData.filter(guardian => guardian.areaId === user.areaId);
         }
         
-        setAids(filteredData);
+        setAids(filteredAidsData);
+        setGuardians(filteredGuardiansData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -141,7 +169,10 @@ export const AidsPage: React.FC = () => {
       
       // فلترة حسب المنطقة
       if (filters.selectedArea) {
-        filtered = filtered.filter(aid => aid.areaId?.toString() === filters.selectedArea);
+        filtered = filtered.filter(aid => {
+          const guardian = guardians.find(g => g.nationalId === aid.guardianNationalId);
+          return guardian && guardian.areaId?.toString() === filters.selectedArea;
+        });
       }
       
       // فلترة حسب نوع المساعدة
@@ -167,7 +198,7 @@ export const AidsPage: React.FC = () => {
     }, 300);
     
     return () => clearTimeout(timer);
-  }, [filters, aids, searchTerm]);
+  }, [filters, aids, searchTerm, guardians]);
 
   const hasActiveFilters = () => {
     return filters.selectedArea || 
@@ -184,12 +215,10 @@ export const AidsPage: React.FC = () => {
       
       // إذا كان المستخدم مندوب منطقة، تأكد من أن المساعدة الجديدة تنتمي إلى منطقته
       if (user?.role === 'representative' && user?.areaId) {
-        data.areaId = user.areaId;
-        data.areaName = mockAreas.find(area => area.id === user.areaId)?.name || '';
-      } else if (guardian) {
-        // إذا لم يكن مندوب منطقة، استخدم منطقة ولي الأمر
-        data.areaId = guardian.areaId;
-        data.areaName = guardian.areaName;
+        if (!guardian || guardian.areaId !== user.areaId) {
+          setError('لا يمكنك إضافة مساعدة لولي أمر من منطقة أخرى');
+          return;
+        }
       }
       
       // إضافة المساعدة إلى قاعدة البيانات
@@ -234,12 +263,10 @@ export const AidsPage: React.FC = () => {
       
       // إذا كان المستخدم مندوب منطقة، تأكد من أن المساعدة المعدلة تنتمي إلى منطقته
       if (user?.role === 'representative' && user?.areaId) {
-        data.areaId = user.areaId;
-        data.areaName = mockAreas.find(area => area.id === user.areaId)?.name || '';
-      } else if (guardian) {
-        // إذا لم يكن مندوب منطقة، استخدم منطقة ولي الأمر
-        data.areaId = guardian.areaId;
-        data.areaName = guardian.areaName;
+        if (!guardian || guardian.areaId !== user.areaId) {
+          setError('لا يمكنك تعديل مساعدة لولي أمر من منطقة أخرى');
+          return;
+        }
       }
       
       // تحديث المساعدة في قاعدة البيانات
@@ -291,9 +318,12 @@ export const AidsPage: React.FC = () => {
 
   const handleDuplicateAid = async (aid: Aid) => {
     // إذا كان المستخدم مندوب منطقة، تأكد من أن المساعدة المكررة تنتمي إلى منطقته
-    if (user?.role === 'representative' && user?.areaId && aid.areaId !== user.areaId) {
-      alert('لا يمكنك تكرار مساعدة من منطقة أخرى');
-      return;
+    if (user?.role === 'representative' && user?.areaId) {
+      const guardian = guardians.find(g => g.nationalId === aid.guardianNationalId);
+      if (!guardian || guardian.areaId !== user.areaId) {
+        setError('لا يمكنك تكرار مساعدة من منطقة أخرى');
+        return;
+      }
     }
     
     try {
@@ -332,9 +362,12 @@ export const AidsPage: React.FC = () => {
 
   const handleDeleteAid = async (aid: Aid) => {
     // إذا كان المستخدم مندوب منطقة، تأكد من أنه يمكنه حذف المساعدة فقط من منطقته
-    if (user?.role === 'representative' && user?.areaId && aid.areaId !== user.areaId) {
-      alert('لا يمكنك حذف مساعدة من منطقة أخرى');
-      return;
+    if (user?.role === 'representative' && user?.areaId) {
+      const guardian = guardians.find(g => g.nationalId === aid.guardianNationalId);
+      if (!guardian || guardian.areaId !== user.areaId) {
+        setError('لا يمكنك حذف مساعدة من منطقة أخرى');
+        return;
+      }
     }
     
     if (window.confirm(`هل أنت متأكد من حذف المساعدة لـ ${aid.guardianName || aid.guardianNationalId}؟`)) {
@@ -351,36 +384,65 @@ export const AidsPage: React.FC = () => {
     }
   };
 
-  const handleBulkDelete = (aidIds: number[]) => {
+  const handleBulkDelete = async (aidIds: number[]) => {
     // إذا كان المستخدم مندوب منطقة، تأكد من أنه يمكنه حذف المساعدات فقط من منطقته
     if (user?.role === 'representative' && user?.areaId) {
       const aidsToDelete = aids.filter(aid => aidIds.includes(aid.id));
-      const hasOtherAreaAids = aidsToDelete.some(aid => aid.areaId !== user.areaId);
+      const hasOtherAreaAids = aidsToDelete.some(aid => {
+        const guardian = guardians.find(g => g.nationalId === aid.guardianNationalId);
+        return !guardian || guardian.areaId !== user.areaId;
+      });
       
       if (hasOtherAreaAids) {
-        alert('لا يمكنك حذف مساعدات من مناطق أخرى');
+        setError('لا يمكنك حذف مساعدات من مناطق أخرى');
         return;
       }
     }
     
-    setAids(aids.filter(aid => !aidIds.includes(aid.id)));
+    try {
+      // حذف المساعدات من قاعدة البيانات
+      const deletePromises = aidIds.map(id => {
+        const aid = aids.find(a => a.id === id);
+        return aid ? aidsAPI.delete(aid._id || '') : Promise.resolve();
+      });
+      
+      await Promise.all(deletePromises);
+      
+      // حذف المساعدات من القائمة المحلية
+      setAids(aids.filter(aid => !aidIds.includes(aid.id)));
+    } catch (error) {
+      console.error('Error bulk deleting aids:', error);
+      setError('فشل في حذف المساعدات المحددة');
+    }
   };
 
-  const handleInlineEdit = (aid: Aid, field: string, value: any) => {
+  const handleInlineEdit = async (aid: Aid, field: string, value: any) => {
     // إذا كان المستخدم مندوب منطقة، تأكد من أنه يمكنه تعديل المساعدات فقط من منطقته
-    if (user?.role === 'representative' && user?.areaId && aid.areaId !== user.areaId) {
-      alert('لا يمكنك تعديل مساعدة من منطقة أخرى');
-      return;
+    if (user?.role === 'representative' && user?.areaId) {
+      const guardian = guardians.find(g => g.nationalId === aid.guardianNationalId);
+      if (!guardian || guardian.areaId !== user.areaId) {
+        setError('لا يمكنك تعديل مساعدة من منطقة أخرى');
+        return;
+      }
     }
     
-    const updatedAids = aids.map(a => {
-      if (a.id === aid.id) {
-        return { ...a, [field]: value, updatedAt: new Date().toISOString() };
-      }
-      return a;
-    });
-    
-    setAids(updatedAids);
+    try {
+      // تحديث المساعدة في قاعدة البيانات
+      await aidsAPI.update(aid._id || '', { [field]: value });
+      
+      // تحديث المساعدة في القائمة المحلية
+      const updatedAids = aids.map(a => {
+        if (a.id === aid.id) {
+          return { ...a, [field]: value, updatedAt: new Date().toISOString() };
+        }
+        return a;
+      });
+      
+      setAids(updatedAids);
+    } catch (error) {
+      console.error('Error inline editing aid:', error);
+      setError('فشل في تحديث المساعدة');
+    }
   };
 
   const handleFiltersChange = (newFilters: typeof filters) => {
@@ -446,15 +508,37 @@ export const AidsPage: React.FC = () => {
       }
       
       if (filteredAids.length > 0) {
-        const newAids = filteredAids.map((aidData, index) => ({
-          ...aidData,
-          id: Math.max(0, ...aids.map(a => a.id)) + index + 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })) as Aid[];
+        // إضافة المساعدات إلى قاعدة البيانات
+        const addPromises = filteredAids.map(aidData => 
+          aidsAPI.create({
+            guardianNationalId: aidData.guardianNationalId,
+            guardianName: aidData.guardianName,
+            areaName: aidData.areaName,
+            guardianPhone: aidData.guardianPhone,
+            aidType: aidData.aidType,
+            aidDate: aidData.aidDate,
+            notes: aidData.notes
+          })
+        );
         
-        setAids([...newAids, ...aids]);
-        alert(`تم استيراد ${newAids.length} مساعدة بنجاح.`);
+        const newAids = await Promise.all(addPromises);
+        
+        // تحويل البيانات وإضافتها للقائمة المحلية
+        const convertedAids: Aid[] = newAids.map((newAid, index) => ({
+          id: parseInt(newAid._id?.slice(-6) || '0', 16),
+          guardianNationalId: newAid.guardianNationalId,
+          guardianName: newAid.guardianName || '',
+          areaName: newAid.areaName || '',
+          guardianPhone: newAid.guardianPhone || '',
+          aidType: newAid.aidType,
+          aidDate: newAid.aidDate,
+          notes: newAid.notes || '',
+          createdAt: newAid.createdAt || new Date().toISOString(),
+          updatedAt: newAid.updatedAt || new Date().toISOString()
+        }));
+        
+        setAids([...convertedAids, ...aids]);
+        alert(`تم استيراد ${convertedAids.length} مساعدة بنجاح.`);
       } else {
         alert('لم يتم استيراد أي بيانات. يرجى التحقق من الملف والأخطاء.');
       }
@@ -489,10 +573,18 @@ export const AidsPage: React.FC = () => {
     }
   };
 
-  // تصفية المناطق المتاحة للعرض في الفلتر
-  const availableAreas = user?.role === 'representative' && user?.areaId
-    ? mockAreas.filter(area => area.id === user.areaId)
-    : mockAreas;
+  // إنشاء قائمة المناطق المتاحة من بيانات أولياء الأمور
+  const availableAreas = Array.from(new Set(guardians.map(g => g.areaId)))
+    .map(areaId => ({
+      id: areaId,
+      name: `المنطقة ${areaId}`,
+      representativeName: '',
+      representativeId: '',
+      representativePhone: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      guardiansCount: guardians.filter(g => g.areaId === areaId).length
+    }));
 
   // إذا كان يتم عرض تفاصيل المساعدة، اعرض صفحة التفاصيل
   if (showAidDetails && selectedAid) {
@@ -591,9 +683,19 @@ export const AidsPage: React.FC = () => {
 
           {/* زر حذف الكل */}
           <button
-            onClick={() => {
+            onClick={async () => {
               if (window.confirm('هل أنت متأكد أنك تريد حذف جميع المساعدات؟ لا يمكن التراجع عن هذه العملية.')) {
-                setAids([]);
+                try {
+                  // حذف جميع المساعدات من قاعدة البيانات
+                  const deletePromises = aids.map(aid => aidsAPI.delete(aid._id || ''));
+                  await Promise.all(deletePromises);
+                  
+                  // حذف جميع المساعدات من القائمة المحلية
+                  setAids([]);
+                } catch (error) {
+                  console.error('Error deleting all aids:', error);
+                  setError('فشل في حذف جميع المساعدات');
+                }
               }
             }}
             className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-200 shadow-sm hover:shadow-md"

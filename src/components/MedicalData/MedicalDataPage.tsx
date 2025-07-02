@@ -7,13 +7,12 @@ import { MedicalDataTable } from './MedicalDataTable';
 import { MedicalDataAdvancedFilter } from './MedicalDataAdvancedFilter';
 import { SimpleSearch } from '../Guardians/SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockMedicalData, mockGuardians } from '../../data/mockData';
 import { exportMedicalDataToExcel, createMedicalDataTemplate, importMedicalDataFromExcel, exportMedicalDataErrorsToExcel, downloadExcelFile } from '../../utils/medicalDataExcelUtils';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { medicalDataAPI, guardiansAPI } from '../../services/api';
 
 export const MedicalDataPage: React.FC = () => {
-  const [medicalData, setMedicalData] = useLocalStorage<MedicalData[]>('medicalData', mockMedicalData);
-  const [guardians, setGuardians] = useLocalStorage<Guardian[]>('guardians', mockGuardians);
+  const [medicalData, setMedicalData] = useState<MedicalData[]>([]);
+  const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -29,14 +28,17 @@ export const MedicalDataPage: React.FC = () => {
     searchTerm: ''
   });
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من الخادم
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        setIsLoading(true);
+        const [medicalDataData, guardiansData] = await Promise.all([
+          medicalDataAPI.getAll(),
+          guardiansAPI.getAll()
+        ]);
+        setMedicalData(medicalDataData);
+        setGuardians(guardiansData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -61,13 +63,11 @@ export const MedicalDataPage: React.FC = () => {
       const searchResults = medicalData.filter(data => {
         const term = searchTerm.toLowerCase();
         return (
-          data.patientName.toLowerCase().includes(term) ||
-          data.patientNationalId.includes(term) ||
           (data.guardianName && data.guardianName.toLowerCase().includes(term)) ||
           data.guardianNationalId.includes(term) ||
-          data.diseaseType.toLowerCase().includes(term) ||
-          (data.phone && data.phone.includes(term)) ||
-          (data.notes && data.notes.toLowerCase().includes(term))
+          (data.areaName && data.areaName.toLowerCase().includes(term)) ||
+          (data.medicalCondition && data.medicalCondition.toLowerCase().includes(term)) ||
+          (data.emergencyContact && data.emergencyContact.includes(term))
         );
       });
       
@@ -95,19 +95,17 @@ export const MedicalDataPage: React.FC = () => {
       
       // فلترة حسب نوع المرض
       if (filters.selectedDiseaseType) {
-        filtered = filtered.filter(data => data.diseaseType === filters.selectedDiseaseType);
+        filtered = filtered.filter(data => data.medicalCondition === filters.selectedDiseaseType);
       }
       
       // فلترة حسب البحث العام
       if (filters.searchTerm) {
         const term = filters.searchTerm.toLowerCase();
         filtered = filtered.filter(data => 
-          data.patientName.toLowerCase().includes(term) ||
-          data.patientNationalId.includes(term) ||
           (data.guardianName && data.guardianName.toLowerCase().includes(term)) ||
           data.guardianNationalId.includes(term) ||
-          (data.phone && data.phone.includes(term)) ||
-          (data.notes && data.notes.toLowerCase().includes(term))
+          (data.areaName && data.areaName.toLowerCase().includes(term)) ||
+          (data.medicalCondition && data.medicalCondition.toLowerCase().includes(term))
         );
       }
       
@@ -123,33 +121,51 @@ export const MedicalDataPage: React.FC = () => {
            filters.searchTerm;
   };
 
-  const handleAddMedicalData = (data: Omit<MedicalData, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newMedicalData: MedicalData = {
-      ...data,
-      id: Math.max(0, ...medicalData.map(d => d.id)) + 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    setMedicalData([newMedicalData, ...medicalData]);
-    setIsAddModalOpen(false);
+  const handleAddMedicalData = async (data: Omit<MedicalData, '_id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = guardians.find(g => g._id === data.guardianId);
+      
+      const medicalDataToCreate = {
+        ...data,
+        guardianName: guardian?.name || '',
+        guardianNationalId: guardian?.nationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const newMedicalData = await medicalDataAPI.create(medicalDataToCreate);
+      setMedicalData(prev => [...prev, newMedicalData]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding medical data:', error);
+      alert('حدث خطأ أثناء إضافة البيانات الطبية');
+    }
   };
 
-  const handleEditMedicalData = (data: Omit<MedicalData, 'id' | 'createdAt' | 'updatedAt'>) => {
-    if (!selectedMedicalData) return;
+  const handleEditMedicalData = async (data: Omit<MedicalData, '_id' | 'createdAt' | 'updatedAt'>) => {
+    if (!selectedMedicalData?._id) return;
     
-    const updatedMedicalData: MedicalData = {
-      ...data,
-      id: selectedMedicalData.id,
-      createdAt: selectedMedicalData.createdAt,
-      updatedAt: new Date().toISOString()
-    };
-    
-    setMedicalData(medicalData.map(item => 
-      item.id === selectedMedicalData.id ? updatedMedicalData : item
-    ));
-    
-    setIsEditModalOpen(false);
+    try {
+      // الحصول على بيانات ولي الأمر لتحديث المنطقة
+      const guardian = guardians.find(g => g._id === data.guardianId);
+      
+      const medicalDataToUpdate = {
+        ...data,
+        guardianName: guardian?.name || '',
+        guardianNationalId: guardian?.nationalId || '',
+        areaId: guardian?.areaId || '',
+        areaName: guardian?.areaName || ''
+      };
+
+      const updatedMedicalData = await medicalDataAPI.update(selectedMedicalData._id, medicalDataToUpdate);
+      setMedicalData(prev => prev.map(item => item._id === selectedMedicalData._id ? updatedMedicalData : item));
+      setIsEditModalOpen(false);
+      setSelectedMedicalData(null);
+    } catch (error) {
+      console.error('Error updating medical data:', error);
+      alert('حدث خطأ أثناء تحديث البيانات الطبية');
+    }
   };
 
   const handleViewMedicalData = (data: MedicalData) => {
@@ -162,25 +178,45 @@ export const MedicalDataPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteMedicalData = (data: MedicalData) => {
-    if (window.confirm(`هل أنت متأكد من حذف البيانات المرضية لـ ${data.patientName}؟`)) {
-      setMedicalData(medicalData.filter(item => item.id !== data.id));
+  const handleDeleteMedicalData = async (data: MedicalData) => {
+    if (!data._id) return;
+    
+    if (window.confirm(`هل أنت متأكد من حذف البيانات الطبية لـ ${data.guardianName}؟`)) {
+      try {
+        await medicalDataAPI.delete(data._id);
+        setMedicalData(prev => prev.filter(item => item._id !== data._id));
+      } catch (error) {
+        console.error('Error deleting medical data:', error);
+        alert('حدث خطأ أثناء حذف البيانات الطبية');
+      }
     }
   };
 
-  const handleBulkDelete = (medicalDataIds: number[]) => {
-    setMedicalData(medicalData.filter(item => !medicalDataIds.includes(item.id)));
+  const handleBulkDelete = async (medicalDataIds: string[]) => {
+    if (window.confirm(`هل أنت متأكد من حذف ${medicalDataIds.length} سجل طبي؟`)) {
+      try {
+        // حذف واحد تلو الآخر لأن API لا يدعم حذف متعدد
+        for (const id of medicalDataIds) {
+          await medicalDataAPI.delete(id);
+        }
+        setMedicalData(prev => prev.filter(item => !medicalDataIds.includes(item._id || '')));
+      } catch (error) {
+        console.error('Error bulk deleting medical data:', error);
+        alert('حدث خطأ أثناء حذف البيانات الطبية');
+      }
+    }
   };
 
-  const handleInlineEdit = (data: MedicalData, field: string, value: any) => {
-    const updatedMedicalData = medicalData.map(item => {
-      if (item.id === data.id) {
-        return { ...item, [field]: value, updatedAt: new Date().toISOString() };
-      }
-      return item;
-    });
+  const handleInlineEdit = async (data: MedicalData, field: string, value: any) => {
+    if (!data._id) return;
     
-    setMedicalData(updatedMedicalData);
+    try {
+      const updatedMedicalData = await medicalDataAPI.update(data._id, { [field]: value });
+      setMedicalData(prev => prev.map(item => item._id === data._id ? updatedMedicalData : item));
+    } catch (error) {
+      console.error('Error updating medical data:', error);
+      alert('حدث خطأ أثناء تحديث البيانات الطبية');
+    }
   };
 
   const handleFiltersChange = (newFilters: typeof filters) => {
@@ -205,19 +241,26 @@ export const MedicalDataPage: React.FC = () => {
       if (errors.length > 0) {
         alert(`تم العثور على ${errors.length} أخطاء في ملف الاستيراد. سيتم تنزيل ملف الأخطاء.`);
         const errorWorkbook = exportMedicalDataErrorsToExcel(errors);
-        downloadExcelFile(errorWorkbook, 'أخطاء-استيراد-البيانات-المرضية');
+        downloadExcelFile(errorWorkbook, 'أخطاء-استيراد-البيانات-الطبية');
       }
       
       if (validMedicalData.length > 0) {
-        const newMedicalData = validMedicalData.map((medicalDataItem, index) => ({
-          ...medicalDataItem,
-          id: Math.max(0, ...medicalData.map(d => d.id)) + index + 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })) as MedicalData[];
+        const newMedicalData = await Promise.all(
+          validMedicalData.map(async (medicalDataItem) => {
+            const guardian = guardians.find(g => g._id === medicalDataItem.guardianId);
+            const medicalDataToCreate = {
+              ...medicalDataItem,
+              guardianName: guardian?.name || '',
+              guardianNationalId: guardian?.nationalId || '',
+              areaId: guardian?.areaId || '',
+              areaName: guardian?.areaName || ''
+            };
+            return await medicalDataAPI.create(medicalDataToCreate);
+          })
+        );
         
-        setMedicalData([...newMedicalData, ...medicalData]);
-        alert(`تم استيراد ${newMedicalData.length} سجل مرضي بنجاح.`);
+        setMedicalData(prev => [...newMedicalData, ...prev]);
+        alert(`تم استيراد ${newMedicalData.length} سجل طبي بنجاح.`);
       } else {
         alert('لم يتم استيراد أي بيانات. يرجى التحقق من الملف والأخطاء.');
       }
@@ -234,18 +277,18 @@ export const MedicalDataPage: React.FC = () => {
   const handleExportMedicalData = () => {
     try {
       const workbook = exportMedicalDataToExcel(filteredMedicalData.length > 0 ? filteredMedicalData : medicalData);
-      downloadExcelFile(workbook, 'البيانات-المرضية');
+      downloadExcelFile(workbook, 'البيانات-الطبية');
     } catch (error) {
       console.error('Error exporting medical data:', error);
       alert('حدث خطأ أثناء تصدير البيانات');
     }
   };
 
-  // تنزيل قالب Excel للبيانات المرضية
+  // تنزيل قالب Excel للبيانات الطبية
   const handleDownloadTemplate = () => {
     try {
       const workbook = createMedicalDataTemplate(guardians);
-      downloadExcelFile(workbook, 'قالب-البيانات-المرضية');
+      downloadExcelFile(workbook, 'قالب-البيانات-الطبية');
     } catch (error) {
       console.error('Error creating template:', error);
       alert('حدث خطأ أثناء إنشاء القالب');
@@ -397,7 +440,7 @@ export const MedicalDataPage: React.FC = () => {
       <Modal
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
-        title={`تعديل بيانات المريض: ${selectedMedicalData?.patientName || ''}`}
+        title={`تعديل بيانات المريض: ${selectedMedicalData?.guardianName || ''}`}
         size="lg"
       >
         {selectedMedicalData && (
@@ -414,7 +457,7 @@ export const MedicalDataPage: React.FC = () => {
       <Modal
         isOpen={isViewModalOpen}
         onClose={() => setIsViewModalOpen(false)}
-        title={`تفاصيل المريض: ${selectedMedicalData?.patientName || ''}`}
+        title={`تفاصيل المريض: ${selectedMedicalData?.guardianName || ''}`}
         size="lg"
       >
         {selectedMedicalData && (

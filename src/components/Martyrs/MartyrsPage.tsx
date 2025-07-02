@@ -7,12 +7,11 @@ import { MartyrsTable } from './MartyrsTable';
 import { MartyrsAdvancedFilter } from './MartyrsAdvancedFilter';
 import { SimpleSearch } from '../Guardians/SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockMartyrs } from '../../data/mockData';
 import { exportMartyrsToExcel, createMartyrsTemplate, importMartyrsFromExcel, exportMartyrsErrorsToExcel, downloadExcelFile } from '../../utils/martyrsExcelUtils';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { martyrsAPI } from '../../services/api';
 
 export const MartyrsPage: React.FC = () => {
-  const [martyrs, setMartyrs] = useLocalStorage<Martyr[]>('martyrs', mockMartyrs);
+  const [martyrs, setMartyrs] = useState<Martyr[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -28,14 +27,13 @@ export const MartyrsPage: React.FC = () => {
     dateRange: { from: '', to: '' }
   });
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من الخادم
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        setIsLoading(true);
+        const martyrsData = await martyrsAPI.getAll();
+        setMartyrs(martyrsData);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -62,10 +60,9 @@ export const MartyrsPage: React.FC = () => {
         return (
           martyr.name.toLowerCase().includes(term) ||
           martyr.nationalId.includes(term) ||
-          martyr.agentName.toLowerCase().includes(term) ||
-          martyr.agentNationalId.includes(term) ||
-          martyr.agentPhone.includes(term) ||
-          martyr.relationshipToMartyr.toLowerCase().includes(term)
+          (martyr.guardianName && martyr.guardianName.toLowerCase().includes(term)) ||
+          (martyr.guardianNationalId && martyr.guardianNationalId.includes(term)) ||
+          (martyr.areaName && martyr.areaName.toLowerCase().includes(term))
         );
       });
       
@@ -91,11 +88,6 @@ export const MartyrsPage: React.FC = () => {
     const timer = setTimeout(() => {
       let filtered = [...martyrs];
       
-      // فلترة حسب صلة القرابة
-      if (filters.selectedRelationship) {
-        filtered = filtered.filter(martyr => martyr.relationshipToMartyr === filters.selectedRelationship);
-      }
-      
       // فلترة حسب نطاق تاريخ الاستشهاد
       if (filters.dateRange.from) {
         filtered = filtered.filter(martyr => new Date(martyr.martyrdomDate) >= new Date(filters.dateRange.from));
@@ -117,33 +109,29 @@ export const MartyrsPage: React.FC = () => {
            filters.dateRange.to;
   };
 
-  const handleAddMartyr = (data: Omit<Martyr, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newMartyr: Martyr = {
-      ...data,
-      id: Math.max(0, ...martyrs.map(m => m.id)) + 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    setMartyrs([newMartyr, ...martyrs]);
-    setIsAddModalOpen(false);
+  const handleAddMartyr = async (data: Omit<Martyr, '_id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      const newMartyr = await martyrsAPI.create(data);
+      setMartyrs(prev => [...prev, newMartyr]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding martyr:', error);
+      alert('حدث خطأ أثناء إضافة الشهيد');
+    }
   };
 
-  const handleEditMartyr = (data: Omit<Martyr, 'id' | 'createdAt' | 'updatedAt'>) => {
-    if (!selectedMartyr) return;
+  const handleEditMartyr = async (data: Omit<Martyr, '_id' | 'createdAt' | 'updatedAt'>) => {
+    if (!selectedMartyr?._id) return;
     
-    const updatedMartyr: Martyr = {
-      ...data,
-      id: selectedMartyr.id,
-      createdAt: selectedMartyr.createdAt,
-      updatedAt: new Date().toISOString()
-    };
-    
-    setMartyrs(martyrs.map(martyr => 
-      martyr.id === selectedMartyr.id ? updatedMartyr : martyr
-    ));
-    
-    setIsEditModalOpen(false);
+    try {
+      const updatedMartyr = await martyrsAPI.update(selectedMartyr._id, data);
+      setMartyrs(prev => prev.map(martyr => martyr._id === selectedMartyr._id ? updatedMartyr : martyr));
+      setIsEditModalOpen(false);
+      setSelectedMartyr(null);
+    } catch (error) {
+      console.error('Error updating martyr:', error);
+      alert('حدث خطأ أثناء تحديث الشهيد');
+    }
   };
 
   const handleViewMartyr = (martyr: Martyr) => {
@@ -156,25 +144,42 @@ export const MartyrsPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteMartyr = (martyr: Martyr) => {
+  const handleDeleteMartyr = async (martyr: Martyr) => {
+    if (!martyr._id) return;
+    
     if (window.confirm(`هل أنت متأكد من حذف الشهيد ${martyr.name}؟`)) {
-      setMartyrs(martyrs.filter(m => m.id !== martyr.id));
+      try {
+        await martyrsAPI.delete(martyr._id);
+        setMartyrs(prev => prev.filter(m => m._id !== martyr._id));
+      } catch (error) {
+        console.error('Error deleting martyr:', error);
+        alert('حدث خطأ أثناء حذف الشهيد');
+      }
     }
   };
 
-  const handleBulkDelete = (martyrIds: number[]) => {
-    setMartyrs(martyrs.filter(martyr => !martyrIds.includes(martyr.id)));
+  const handleBulkDelete = async (martyrIds: string[]) => {
+    if (window.confirm(`هل أنت متأكد من حذف ${martyrIds.length} شهيد؟`)) {
+      try {
+        await martyrsAPI.deleteMany(martyrIds);
+        setMartyrs(prev => prev.filter(martyr => !martyrIds.includes(martyr._id || '')));
+      } catch (error) {
+        console.error('Error bulk deleting martyrs:', error);
+        alert('حدث خطأ أثناء حذف الشهداء');
+      }
+    }
   };
 
-  const handleInlineEdit = (martyr: Martyr, field: string, value: any) => {
-    const updatedMartyrs = martyrs.map(m => {
-      if (m.id === martyr.id) {
-        return { ...m, [field]: value, updatedAt: new Date().toISOString() };
-      }
-      return m;
-    });
+  const handleInlineEdit = async (martyr: Martyr, field: string, value: any) => {
+    if (!martyr._id) return;
     
-    setMartyrs(updatedMartyrs);
+    try {
+      const updatedMartyr = await martyrsAPI.update(martyr._id, { [field]: value });
+      setMartyrs(prev => prev.map(m => m._id === martyr._id ? updatedMartyr : m));
+    } catch (error) {
+      console.error('Error updating martyr:', error);
+      alert('حدث خطأ أثناء تحديث الشهيد');
+    }
   };
 
   const handleFiltersChange = (newFilters: typeof filters) => {
@@ -203,14 +208,13 @@ export const MartyrsPage: React.FC = () => {
       }
       
       if (validMartyrs.length > 0) {
-        const newMartyrs = validMartyrs.map((martyrData, index) => ({
-          ...martyrData,
-          id: Math.max(0, ...martyrs.map(m => m.id)) + index + 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })) as Martyr[];
+        const newMartyrs = await Promise.all(
+          validMartyrs.map(async (martyrData) => {
+            return await martyrsAPI.create(martyrData);
+          })
+        );
         
-        setMartyrs([...newMartyrs, ...martyrs]);
+        setMartyrs(prev => [...newMartyrs, ...prev]);
         alert(`تم استيراد ${newMartyrs.length} شهيد بنجاح.`);
       } else {
         alert('لم يتم استيراد أي بيانات. يرجى التحقق من الملف والأخطاء.');

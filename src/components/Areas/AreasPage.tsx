@@ -6,12 +6,11 @@ import { AreaDetails } from './AreaDetails';
 import { AreasTable } from './AreasTable';
 import { SimpleSearch } from '../Guardians/SimpleSearch';
 import { Plus, Download, Upload, FileText } from 'lucide-react';
-import { mockAreas } from '../../data/mockData';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { smartSearch } from '../../utils/smartSearch';
+import { areasAPI } from '../../services/api';
 
 export const AreasPage: React.FC = () => {
-  const [areas, setAreas] = useLocalStorage<Area[]>('areas', mockAreas);
+  const [areas, setAreas] = useState<Area[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredAreas, setFilteredAreas] = useState<Area[]>([]);
@@ -21,14 +20,26 @@ export const AreasPage: React.FC = () => {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [selectedArea, setSelectedArea] = useState<Area | null>(null);
 
-  // محاكاة جلب البيانات من الخادم
+  // جلب البيانات من الخادم
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // محاكاة تأخير الشبكة
-        await new Promise(resolve => setTimeout(resolve, 500));
+        setIsLoading(true);
+        const areasData = await areasAPI.getAll();
         
-        // البيانات الآن تُحفظ في localStorage تلقائياً
+        // تحويل البيانات من API إلى التنسيق المطلوب
+        const convertedAreas: Area[] = areasData.map((area: any) => ({
+          id: parseInt(area._id?.slice(-6) || '0', 16),
+          name: area.name,
+          representativeName: area.representativeName || '',
+          representativeId: area.representativeId || '',
+          representativePhone: area.representativePhone || '',
+          createdAt: area.createdAt || new Date().toISOString(),
+          updatedAt: area.updatedAt || new Date().toISOString(),
+          guardiansCount: 0 // سيتم تحديثه لاحقاً إذا لزم الأمر
+        }));
+        
+        setAreas(convertedAreas);
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -56,34 +67,55 @@ export const AreasPage: React.FC = () => {
     setFilteredAreas(searchResults);
   }, [searchTerm, areas]);
 
-  const handleAddArea = (data: Omit<Area, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newArea: Area = {
-      ...data,
-      id: Math.max(0, ...areas.map(a => a.id)) + 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    setAreas([newArea, ...areas]);
-    setIsAddModalOpen(false);
+  const handleAddArea = async (data: Omit<Area, 'id' | 'createdAt' | 'updatedAt'>) => {
+    try {
+      const newArea = await areasAPI.create(data);
+      
+      // تحويل البيانات المستلمة إلى التنسيق المطلوب
+      const convertedArea: Area = {
+        id: parseInt(newArea._id?.slice(-6) || '0', 16),
+        name: newArea.name,
+        representativeName: newArea.representativeName || '',
+        representativeId: newArea.representativeId || '',
+        representativePhone: newArea.representativePhone || '',
+        createdAt: newArea.createdAt || new Date().toISOString(),
+        updatedAt: newArea.updatedAt || new Date().toISOString(),
+        guardiansCount: 0
+      };
+      
+      setAreas(prev => [...prev, convertedArea]);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error('Error adding area:', error);
+      alert('حدث خطأ أثناء إضافة المنطقة');
+    }
   };
 
-  const handleEditArea = (data: Omit<Area, 'id' | 'createdAt' | 'updatedAt'>) => {
-    if (!selectedArea) return;
+  const handleEditArea = async (data: Omit<Area, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!selectedArea?._id) return;
     
-    const updatedArea: Area = {
-      ...data,
-      id: selectedArea.id,
-      createdAt: selectedArea.createdAt,
-      updatedAt: new Date().toISOString(),
-      guardiansCount: selectedArea.guardiansCount
-    };
-    
-    setAreas(areas.map(area => 
-      area.id === selectedArea.id ? updatedArea : area
-    ));
-    
-    setIsEditModalOpen(false);
+    try {
+      const updatedArea = await areasAPI.update(selectedArea._id, data);
+      
+      // تحويل البيانات المستلمة إلى التنسيق المطلوب
+      const convertedArea: Area = {
+        id: parseInt(updatedArea._id?.slice(-6) || '0', 16),
+        name: updatedArea.name,
+        representativeName: updatedArea.representativeName || '',
+        representativeId: updatedArea.representativeId || '',
+        representativePhone: updatedArea.representativePhone || '',
+        createdAt: updatedArea.createdAt || new Date().toISOString(),
+        updatedAt: updatedArea.updatedAt || new Date().toISOString(),
+        guardiansCount: selectedArea.guardiansCount
+      };
+      
+      setAreas(prev => prev.map(area => area.id === selectedArea.id ? convertedArea : area));
+      setIsEditModalOpen(false);
+      setSelectedArea(null);
+    } catch (error) {
+      console.error('Error updating area:', error);
+      alert('حدث خطأ أثناء تحديث المنطقة');
+    }
   };
 
   const handleViewArea = (area: Area) => {
@@ -96,9 +128,17 @@ export const AreasPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleDeleteArea = (area: Area) => {
+  const handleDeleteArea = async (area: Area) => {
+    if (!area._id) return;
+    
     if (window.confirm(`هل أنت متأكد من حذف المنطقة ${area.name}؟`)) {
-      setAreas(areas.filter(a => a.id !== area.id));
+      try {
+        await areasAPI.delete(area._id);
+        setAreas(prev => prev.filter(a => a.id !== area.id));
+      } catch (error) {
+        console.error('Error deleting area:', error);
+        alert('حدث خطأ أثناء حذف المنطقة');
+      }
     }
   };
 
