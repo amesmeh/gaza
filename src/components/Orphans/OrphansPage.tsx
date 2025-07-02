@@ -219,10 +219,7 @@ export const OrphansPage: React.FC = () => {
   const handleBulkDelete = async (orphanIds: string[]) => {
     if (window.confirm(`هل أنت متأكد من حذف ${orphanIds.length} يتيم؟`)) {
       try {
-        // حذف واحد تلو الآخر لأن API لا يدعم حذف متعدد
-        for (const id of orphanIds) {
-          await orphansAPI.delete(id);
-        }
+        await orphansAPI.deleteMany(orphanIds);
         setOrphans(prev => prev.filter(orphan => !orphanIds.includes(orphan._id || '')));
       } catch (error) {
         console.error('Error bulk deleting orphans:', error);
@@ -292,6 +289,7 @@ export const OrphansPage: React.FC = () => {
             const guardian = martyrs.find(m => m._id === orphanData.guardianId);
             const orphanToCreate = {
               ...orphanData,
+              age: calculateAge(orphanData.birthDate as string),
               guardianName: guardian?.guardianName || '',
               guardianNationalId: guardian?.guardianNationalId || '',
               areaId: guardian?.areaId || '',
@@ -337,24 +335,6 @@ export const OrphansPage: React.FC = () => {
     }
   };
 
-  // الحالات الصحية المتاحة
-  const healthStatuses = [
-    'جيدة',
-    'متوسطة',
-    'ضعيفة',
-    'سيئة'
-  ];
-
-  // المراحل الدراسية المتاحة
-  const educationalStages = [
-    'روضة',
-    'ابتدائي',
-    'إعدادي',
-    'ثانوي',
-    'جامعي',
-    'غير متعلم'
-  ];
-
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -365,108 +345,125 @@ export const OrphansPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4 bg-gradient-to-br from-gray-50 to-blue-50 min-h-screen">
       {/* العنوان وأزرار الإجراءات */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">إدارة الأيتام</h1>
-        
-        <div className="flex flex-wrap items-center gap-3">
-          {/* أزرار الإضافة والتصدير */}
-          <div className="flex items-center gap-2">
+      <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">إدارة الأيتام</h1>
+            <p className="text-gray-600 text-sm">إدارة بيانات الأيتام وعائلاتهم</p>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            {/* أزرار الإضافة والتصدير */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsAddModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-700 text-white rounded-lg hover:from-emerald-700 hover:to-emerald-800 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm"
+              >
+                <Plus className="h-4 w-4" />
+                <span>إضافة يتيم</span>
+              </button>
+              <button
+                onClick={handleExportOrphans}
+                className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm"
+              >
+                <Download className="h-4 w-4" />
+                <span>تصدير Excel</span>
+              </button>
+            </div>
+
+            {/* زر الاستيراد */}
+            <div className="relative">
+              <input
+                type="file"
+                id="importFile"
+                accept=".xlsx, .xls"
+                onChange={handleImportOrphans}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <label
+                htmlFor="importFile"
+                className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-lg hover:from-indigo-700 hover:to-indigo-800 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm cursor-pointer"
+              >
+                <Upload className="h-4 w-4" />
+                <span>استيراد Excel</span>
+              </label>
+            </div>
+
+            {/* زر تحميل القالب */}
             <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all duration-200 shadow-sm hover:shadow-md"
+              onClick={handleDownloadTemplate}
+              className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-lg hover:from-purple-700 hover:to-purple-800 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm"
             >
-              <Plus className="h-4 w-4" />
-              <span className="font-medium">إضافة يتيم</span>
+              <FileText className="h-4 w-4" />
+              <span>تحميل القالب</span>
             </button>
+
+            {/* زر حذف الكل */}
             <button
-              onClick={handleExportOrphans}
-              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-200 shadow-sm hover:shadow-md"
+              onClick={async () => {
+                if (window.confirm('هل أنت متأكد أنك تريد حذف جميع الأيتام؟ لا يمكن التراجع عن هذه العملية.')) {
+                  try {
+                    const allOrphanIds = orphans.map(orphan => orphan._id || '').filter(id => id);
+                    if (allOrphanIds.length > 0) {
+                      await orphansAPI.deleteMany(allOrphanIds);
+                      setOrphans([]);
+                      alert('تم حذف جميع الأيتام بنجاح');
+                    }
+                  } catch (error) {
+                    console.error('Error deleting all orphans:', error);
+                    alert('حدث خطأ أثناء حذف جميع الأيتام');
+                  }
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg hover:from-red-700 hover:to-red-800 transition-all duration-200 shadow-md hover:shadow-lg font-semibold text-sm"
             >
-              <Download className="h-4 w-4" />
-              <span className="font-medium">تصدير Excel</span>
+              <span className="text-lg font-bold">×</span>
+              <span>حذف الكل</span>
             </button>
           </div>
-
-          {/* زر الاستيراد */}
-          <div className="relative">
-            <input
-              type="file"
-              id="importFile"
-              accept=".xlsx, .xls"
-              onChange={handleImportOrphans}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-            <label
-              htmlFor="importFile"
-              className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all duration-200 shadow-sm hover:shadow-md cursor-pointer"
-            >
-              <Upload className="h-4 w-4" />
-              <span className="font-medium">استيراد Excel</span>
-            </label>
-          </div>
-
-          {/* زر تحميل القالب */}
-          <button
-            onClick={handleDownloadTemplate}
-            className="flex items-center gap-2 px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all duration-200 shadow-sm hover:shadow-md"
-          >
-            <FileText className="h-4 w-4" />
-            <span className="font-medium">تحميل القالب</span>
-          </button>
-
-          {/* زر حذف الكل */}
-          <button
-            onClick={() => {
-              if (window.confirm('هل أنت متأكد أنك تريد حذف جميع الأيتام؟ لا يمكن التراجع عن هذه العملية.')) {
-                setOrphans([]);
-              }
-            }}
-            className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-200 shadow-sm hover:shadow-md"
-          >
-            <span className="text-lg font-bold">×</span>
-            <span className="font-medium">حذف الكل</span>
-          </button>
         </div>
       </div>
 
       {/* البحث البسيط */}
-      <SimpleSearch
-        searchTerm={searchTerm}
-        onSearchChange={setSearchTerm}
-        placeholder="البحث في الأيتام (الاسم، رقم الهوية، اسم الشهيد، اسم الوصي...)"
-        resultsCount={filteredOrphans.length}
-      />
+      <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-4">
+        <SimpleSearch
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          placeholder="البحث في الأيتام (الاسم، رقم الهوية، اسم الشهيد...)"
+        />
+      </div>
 
       {/* فلاتر البحث المتقدمة */}
-      <OrphanAdvancedFilter
-        filters={filters}
-        healthStatuses={healthStatuses}
-        educationalStages={educationalStages}
-        onFiltersChange={handleFiltersChange}
-        onSearch={() => {}}
-        onReset={resetFilters}
-        resultsCount={filteredOrphans.length}
-        isSearching={isSearching}
-      />
+      <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-4">
+        <OrphanAdvancedFilter
+          filters={filters}
+          onFiltersChange={handleFiltersChange}
+          onSearch={() => {}}
+          onReset={resetFilters}
+          isSearching={isSearching}
+        />
+      </div>
 
       {/* جدول الأيتام */}
-      <OrphanTable
-        orphans={filteredOrphans}
-        onView={handleViewOrphan}
-        onEdit={handleEditOrphanClick}
-        onDelete={handleDeleteOrphan}
-        onBulkDelete={handleBulkDelete}
-        onInlineEdit={handleInlineEdit}
-      />
+      <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-4">
+        <OrphanTable
+          orphans={filteredOrphans}
+          onView={handleViewOrphan}
+          onEdit={handleEditOrphanClick}
+          onDelete={handleDeleteOrphan}
+          onBulkDelete={handleBulkDelete}
+          onInlineEdit={handleInlineEdit}
+        />
+      </div>
 
       {/* نافذة إضافة يتيم جديد */}
       <Modal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         title="إضافة يتيم جديد"
-        size="xl"
+        size="lg"
       >
         <OrphanForm
           martyrs={martyrs}
@@ -480,7 +477,7 @@ export const OrphansPage: React.FC = () => {
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
         title={`تعديل بيانات اليتيم: ${selectedOrphan?.name || ''}`}
-        size="xl"
+        size="lg"
       >
         {selectedOrphan && (
           <OrphanForm
@@ -508,4 +505,4 @@ export const OrphansPage: React.FC = () => {
       </Modal>
     </div>
   );
-};
+}; 
